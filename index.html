@@ -84,6 +84,7 @@ table.tg input{width:46px;text-align:center;padding:3px}
 .card.jump .chg{color:var(--over);font-weight:700}
 .card.locked{cursor:not-allowed;background:repeating-linear-gradient(135deg,var(--chip),var(--chip) 6px,var(--panel2) 6px,var(--panel2) 12px)}
 .card .lk{font-size:10.5px;color:var(--muted);margin-left:5px}
+.card .cost{display:inline-block;min-width:17px;height:17px;line-height:17px;text-align:center;border-radius:50%;background:var(--accent);color:#fff;font-size:10.5px;font-weight:700;margin-right:5px;vertical-align:1px}
 .card.dim{opacity:.25}
 .card.hit{box-shadow:0 0 0 3px #ffd43b}
 .card .btn{position:absolute;top:1px;right:2px;display:none;padding:0 5px;line-height:16px;font-size:11px}
@@ -120,6 +121,7 @@ dialog input,dialog select{width:100%}
   <div class="toolbar">
     <button class="primary" id="newBtn">+ Create new card</button>
     <input type="search" id="search" placeholder="Find card by name…" size="22">
+    <label class="stat" style="cursor:pointer"><input type="checkbox" id="showCost"> Show card costs</label>
     <button id="resetAll">Reset all changes</button>
     <button id="toExport">Jump to export ↓</button>
     <span class="grow"></span>
@@ -294,6 +296,7 @@ function cntBadge(n, t){
 }
 
 /* ---------- render ---------- */
+const showCost = () => $("#showCost").checked;
 function chipHTML(c, q){
   const parts = [];
   if (c.isNew) parts.push("NEW CARD");
@@ -308,7 +311,7 @@ function chipHTML(c, q){
   const btn = c.isNew ? `<button class="btn" data-act="del" title="Remove this new card">✕</button>`
             : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "";
   return `<div class="${cls.join(" ")}" draggable="${c.locked ? "false" : "true"}" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
-    <span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the newest set">🔒 ${esc(c.setLabel)}</span>` : ""}
+    ${showCost() && c.info && c.info.cost !== "" ? `<span class="cost" title="Card cost">${esc(c.info.cost)}</span>` : ""}<span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the newest set">🔒 ${esc(c.setLabel)}</span>` : ""}
     ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${btn}</div>`;
 }
 
@@ -481,6 +484,8 @@ function blocklyDupes(){
 /* ---------- events ---------- */
 $("#parseBtn").onclick = () => doParse(false);
 $("#search").oninput = render;
+try { $("#showCost").checked = localStorage.getItem(STORE + "-cost") === "1"; } catch(e){}
+$("#showCost").onchange = () => { try { localStorage.setItem(STORE + "-cost", $("#showCost").checked ? "1" : "0"); } catch(e){} render(); };
 $("#toExport").onclick = () => $("#exportSec").scrollIntoView({behavior:"smooth"});
 $("#resetAll").onclick = () => {
   if (!cards.length || !confirm("Undo all moves and remove all new cards?")) return;
