@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Echo of Omens Rarity Balancer</title>
+<style>
+:root{
+  --bg:#f4f5f8; --panel:#ffffff; --panel2:#eef0f5; --line:#d5d9e3; --text:#1c2030; --muted:#667089;
+  --ok:#1d8a4b; --okbg:#e0f4e8; --over:#c62d2d; --overbg:#fde6e6; --under:#a86400; --underbg:#fff0d2;
+  --accent:#3b5bdb; --new:#7c3aed;
+  --common:#7b8394; --uncommon:#2f9e5b; --rare:#2f6fdb; --legendary:#d9822b;
+  --chip:#ffffff; --shadow:0 1px 2px rgba(0,0,0,.08);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#13151b; --panel:#1b1e27; --panel2:#232733; --line:#343a4a; --text:#e6e9f2; --muted:#98a1b8;
+    --ok:#52d189; --okbg:#173a28; --over:#ff7b7b; --overbg:#451d1f; --under:#ffc062; --underbg:#43331a;
+    --accent:#7d96ff; --new:#b794ff; --chip:#262b39; --shadow:none;
+    --common:#9aa3b8; --uncommon:#52d189; --rare:#6ea2ff; --legendary:#ffb15c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif}
+header.top{padding:14px 20px 4px}
+h1{margin:0;font-size:20px}
+.sub{color:var(--muted);font-size:12.5px;margin-top:2px}
+.wrap{padding:0 20px 60px;max-width:1900px;margin:0 auto}
+details.paste{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:10px 0;padding:8px 12px}
+details.paste summary{cursor:pointer;font-weight:600}
+textarea{width:100%;font:12px/1.3 ui-monospace,Menlo,Consolas,monospace;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px}
+#raw{height:140px;margin-top:8px}
+button,select,input{font:inherit;color:var(--text)}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 11px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+input[type=text],input[type=search],select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+.status{margin-left:10px;color:var(--muted);font-size:12.5px}
+.toolbar{position:sticky;top:0;z-index:20;background:var(--bg);padding:8px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-bottom:1px solid var(--line)}
+.toolbar .grow{flex:1}
+.stat{font-size:12.5px;padding:3px 9px;border-radius:99px;background:var(--panel2);border:1px solid var(--line)}
+.stat.bad{background:var(--overbg);color:var(--over);border-color:var(--over)}
+.stat.good{background:var(--okbg);color:var(--ok);border-color:var(--ok)}
+#warnings{margin:10px 0}
+.warnbox{background:var(--underbg);border:1px solid var(--under);color:var(--text);border-radius:8px;padding:8px 12px}
+.warnbox b{color:var(--under)}
+.warnbox ul{margin:4px 0 0 18px;padding:0}
+.deck{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;transition:opacity .15s}
+.deck.faded{opacity:.3}
+.deckhead{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline}
+.deckhead h2{margin:0;font-size:17px}
+.deckhead .meta{color:var(--muted);font-size:12.5px}
+details.targets{margin:6px 0 10px;font-size:12.5px}
+details.targets summary{cursor:pointer;color:var(--accent)}
+table.tg{border-collapse:collapse;margin-top:6px}
+table.tg th,table.tg td{padding:3px 8px;text-align:center;font-weight:500}
+table.tg input{width:46px;text-align:center;padding:3px}
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px;align-items:start}
+.panel{border:1px solid var(--line);border-radius:8px;background:var(--panel2);overflow:hidden}
+.phead{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;font-weight:700;border-bottom:1px solid var(--line)}
+.phead .tot{font-weight:600;font-size:12.5px;padding:1px 8px;border-radius:99px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}
+.colhead{background:var(--panel2);text-align:center;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:3px}
+.cell{background:var(--panel);min-height:56px;padding:5px;transition:background .1s,box-shadow .1s}
+.cell.over-drop{background:var(--okbg);box-shadow:inset 0 0 0 2px var(--accent)}
+.chead{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:12px}
+.rar{font-weight:700;display:flex;align-items:center;gap:5px}
+.rar::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--c)}
+.cnt{font-weight:600;padding:0 7px;border-radius:99px;font-size:11.5px;display:flex;gap:4px;align-items:center}
+.cnt.ok{background:var(--okbg);color:var(--ok)}
+.cnt.over{background:var(--overbg);color:var(--over)}
+.cnt.under{background:var(--underbg);color:var(--under)}
+.cnt.none{background:var(--panel2);color:var(--muted)}
+.cnt .plus{cursor:pointer;border:none;background:none;padding:0 0 0 4px;color:var(--accent);font-weight:800}
+.card{position:relative;background:var(--chip);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:5px;padding:3px 6px;margin-bottom:3px;cursor:grab;box-shadow:var(--shadow);font-size:12.5px}
+.card:active{cursor:grabbing}
+.card .nm{font-weight:600}
+.card .ty{color:var(--muted);font-size:10.5px;margin-left:5px}
+.card .chg{display:block;font-size:10.5px;color:var(--accent)}
+.card.changed{outline:1.5px solid var(--accent)}
+.card.isnew{outline:1.5px dashed var(--new)}
+.card.isnew .chg,.card .newtag{color:var(--new);font-weight:700}
+.card.jump{outline:2px solid var(--over)}
+.card.jump .chg{color:var(--over);font-weight:700}
+.card.dim{opacity:.25}
+.card.hit{box-shadow:0 0 0 3px #ffd43b}
+.card .btn{position:absolute;top:1px;right:2px;display:none;padding:0 5px;line-height:16px;font-size:11px}
+.card:hover .btn{display:block}
+.legend{font-size:12px;color:var(--muted);margin:6px 0}
+#exportBox{height:340px}
+.exp{margin-top:22px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.exp h2{margin:0 0 8px;font-size:17px}
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);padding:16px 18px;min-width:340px}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog label{display:block;margin:8px 0 2px;font-size:12px;color:var(--muted)}
+dialog input,dialog select{width:100%}
+.dlgbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.empty{padding:30px;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Echo of Omens: Rarity Balancer</h1>
+  <div class="sub">Drag cards between buckets (aspect × loyalty × rarity). Changes are tracked against the original export and listed at the bottom.</div>
+</header>
+<div class="wrap">
+  <details class="paste" id="pasteBox" open>
+    <summary>1. Paste export string</summary>
+    <textarea id="raw" spellcheck="false" placeholder='Paste the whole export here (header line + one "field|field|...", line per card)'></textarea>
+    <div style="margin-top:8px"><button class="primary" id="parseBtn">Parse cards</button><span class="status" id="parseStatus"></span></div>
+  </details>
+
+  <div class="toolbar">
+    <button class="primary" id="newBtn">+ Create new card</button>
+    <input type="search" id="search" placeholder="Find card by name…" size="22">
+    <button id="resetAll">Reset all changes</button>
+    <button id="toExport">Jump to export ↓</button>
+    <span class="grow"></span>
+    <span class="stat" id="stChanged">0 changed</span>
+    <span class="stat" id="stNew">0 new</span>
+    <span class="stat" id="stOff">–</span>
+    <span class="stat" id="stWarn">0 warnings</span>
+  </div>
+
+  <div id="warnings"></div>
+  <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new, red outline = rarity jump of more than one step. Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets.</div>
+
+  <div id="board"><div class="empty">Paste your export above and press “Parse cards”.</div></div>
+
+  <div class="exp" id="exportSec">
+    <h2>2. Change instructions</h2>
+    <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="primary" id="copyBtn">Copy to clipboard</button>
+      <button id="dlBtn">Download .txt</button>
+      <span class="status" id="copyStatus"></span>
+    </div>
+    <textarea id="exportBox" readonly spellcheck="false"></textarea>
+  </div>
+
+  <div class="exp" id="blocklySec">
+    <h2>3. Blockly script (JSON)</h2>
+    <div class="sub" style="margin-bottom:8px">Loops over all cards and applies the rarity / loyalty / aspect changes by card name. New cards are not included (no block for creating cards), so add those by hand from the instructions above.</div>
+    <div id="blocklyWarn" class="warnbox" style="display:none;margin-bottom:8px"></div>
+    <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="primary" id="copyBlk">Copy JSON</button>
+      <button id="dlBlk">Download .json</button>
+      <span class="status" id="blkStatus"></span>
+    </div>
+    <textarea id="blocklyBox" readonly spellcheck="false" style="height:160px"></textarea>
+  </div>
+</div>
+
+<dialog id="dlg">
+  <form method="dialog" id="dlgForm">
+    <h3 style="margin:0 0 6px">Create new card</h3>
+    <label>Deck</label><select id="nDeck"></select>
+    <label>Card type</label><select id="nType"></select>
+    <label>Name</label><input type="text" id="nName" required>
+    <label>Aspect</label><select id="nAspect"></select>
+    <label>Loyalty</label><select id="nLoy"><option>Standard</option><option>Loyal</option></select>
+    <label>Rarity</label><select id="nRar"></select>
+    <div class="dlgbtns"><button type="button" id="nCancel">Cancel</button><button class="primary" type="submit" id="nOk">Add card</button></div>
+  </form>
+</dialog>
+
+<script>
+"use strict";
+const COLS = ["id","type","name","is_double_sided","subtitle","aspect","loyalty","card-cost","traits","ability","bonus-icons-scripted","health-number","attack","block","inherent-arcane","inherent-diplomacy","inherent-stealth","difficulty","skill-check-type","rarity","leadership","tactics","willpower","deckbuilding-requirement"];
+const RARITIES = ["Common","Uncommon","Rare","Legendary"];
+const RCOLOR = {Common:"var(--common)",Uncommon:"var(--uncommon)",Rare:"var(--rare)",Legendary:"var(--legendary)"};
+const LOYALTIES = ["Standard","Loyal"];
+const DECKS = [
+  {id:"champ",title:"Champion Deck",types:["C - Ally","C - Asset","C - Event"],aspects:["Cunning","Valor","Wisdom"],neutral:"CHNeutral",
+   targets:{Standard:[6,6,4,2],Loyal:[3,3,2,1]}},
+  {id:"main",title:"Overlord Main Deck",types:["O - Asset","O - Encounter","O - Event","O - Lieutenant"],aspects:["Corruption","Deceit","Wrath"],neutral:"OLNeutral",
+   targets:{Standard:[6,8,6,2],Loyal:[3,4,3,1]}},
+  {id:"scheme",title:"Overlord Scheme Deck",types:["O - Scheme"],aspects:["Corruption","Deceit","Wrath"],neutral:"OLNeutral",
+   targets:{Standard:[2,2,2,0],Loyal:[1,1,1,0]}}
+];
+const DEFAULT_TARGETS = JSON.parse(JSON.stringify(DECKS.map(d=>d.targets)));
+const STORE = "eoo-rarity-balancer-v1";
+
+let cards = [], uidCounter = 0, rawText = "", dragCard = null, skipped = 0;
+const openTargets = new Set();
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const deckById = id => DECKS.find(d => d.id === id);
+const rIdx = r => RARITIES.indexOf(r);
+const shortType = t => (t.split(" - ")[1] || t);
+const rarLabel = r => r === "" ? "(none)" : r;
+const aspLabel = a => a === "" ? "(none)" : a;
+
+/* ---------- parsing ---------- */
+function parseExport(text){
+  const out = []; let map = {}; COLS.forEach((c,i)=>map[c]=i); skipped = 0;
+  for (const rawLine of text.split(/\r?\n/)){
+    let l = rawLine.trim();
+    if (!l) continue;
+    l = l.replace(/^["“]/, "").replace(/["”]\s*,?\s*$/, "");
+    if (l.indexOf("|") < 0) continue;
+    const f = l.split("|");
+    if (f[0] === "id" && f[1] === "type"){ map = {}; f.forEach((c,i)=>map[c.trim()]=i); continue; }
+    const g = k => (f[map[k]] ?? "").trim();
+    const type = g("type"), loyalty = g("loyalty");
+    const deck = DECKS.find(d => d.types.includes(type));
+    if (!deck || (loyalty !== "Standard" && loyalty !== "Loyal")){ skipped++; continue; }
+    const o = {aspect:g("aspect"), loyalty, rarity:g("rarity")};
+    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o}, isNew:false});
+  }
+  return out;
+}
+
+/* ---------- state helpers ---------- */
+const changedAttrs = c => c.isNew ? [] : ["aspect","loyalty","rarity"].filter(k => c.orig[k] !== c.cur[k]);
+const isChanged = c => changedAttrs(c).length > 0;
+function jumpSteps(c){
+  if (c.isNew) return 0;
+  const a = rIdx(c.orig.rarity), b = rIdx(c.cur.rarity);
+  if (a < 0 || b < 0) return 0;
+  return Math.abs(a - b);
+}
+const hasJump = c => jumpSteps(c) > 1;
+
+function save(){
+  try {
+    const edits = {};
+    cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = c.cur; });
+    const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur}));
+    const targets = DECKS.map(d => d.targets);
+    localStorage.setItem(STORE, JSON.stringify({raw:rawText, edits, news, targets}));
+  } catch(e){}
+}
+function restore(){
+  try {
+    const s = JSON.parse(localStorage.getItem(STORE) || "null");
+    if (!s || !s.raw) return;
+    $("#raw").value = s.raw;
+    if (s.targets) s.targets.forEach((t,i)=>{ if (DECKS[i] && t) DECKS[i].targets = t; });
+    doParse(true);
+    cards.forEach(c => { const e = s.edits && s.edits[c.id || ("u"+c.uid)]; if (e) c.cur = {...e}; });
+    (s.news||[]).forEach(n => cards.push({uid:++uidCounter,id:"",type:n.type,name:n.name,deck:n.deck,orig:null,cur:{...n.cur},isNew:true}));
+    render();
+  } catch(e){}
+}
+
+function doParse(silent){
+  rawText = $("#raw").value;
+  cards = parseExport(rawText);
+  const st = $("#parseStatus");
+  if (!cards.length){ st.textContent = "No balanced cards found. Check the pasted text."; render(); return; }
+  const per = DECKS.map(d => `${d.title}: ${cards.filter(c=>c.deck===d.id).length}`).join(" · ");
+  st.textContent = `Parsed ${cards.length} balanced cards (${per}); ${skipped} other cards ignored.`;
+  if (!silent){ $("#pasteBox").open = false; save(); }
+  render();
+}
+
+/* ---------- bucket math ---------- */
+function targetFor(deck, aspect, loy, rar){
+  if (!deck.aspects.includes(aspect)) return null;
+  const i = rIdx(rar); if (i < 0) return null;
+  return deck.targets[loy][i];
+}
+function groupCards(){
+  const m = new Map();
+  for (const c of cards){
+    const k = [c.deck,c.cur.aspect,c.cur.loyalty,c.cur.rarity].join("|");
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(c);
+  }
+  return m;
+}
+function cntBadge(n, t){
+  if (t === null) return `<span class="cnt none">${n}</span>`;
+  if (n === t) return `<span class="cnt ok">${n} / ${t} ✓</span>`;
+  if (n > t) return `<span class="cnt over">${n} / ${t} ▲ +${n-t} over</span>`;
+  return `<span class="cnt under">${n} / ${t} ▼ ${t-n} short</span>`;
+}
+
+/* ---------- render ---------- */
+function chipHTML(c, q){
+  const parts = [];
+  if (c.isNew) parts.push("NEW CARD");
+  else changedAttrs(c).forEach(k => parts.push(`${k[0].toUpperCase()+k.slice(1)}: ${aspLabel(c.orig[k])} → ${aspLabel(c.cur[k])}`));
+  const j = jumpSteps(c);
+  if (j > 1) parts.push(`⚠ ${j}-step rarity jump`);
+  const cls = ["card"];
+  if (c.isNew) cls.push("isnew"); else if (isChanged(c)) cls.push("changed");
+  if (hasJump(c)) cls.push("jump");
+  if (q){ cls.push(c.name.toLowerCase().includes(q) ? "hit" : "dim"); }
+  const btn = c.isNew ? `<button class="btn" data-act="del" title="Remove this new card">✕</button>`
+            : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "";
+  return `<div class="${cls.join(" ")}" draggable="true" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" title="${esc(c.type)}${c.id?" · "+esc(c.id):""}">
+    <span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>
+    ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${btn}</div>`;
+}
+
+function render(){
+  const board = $("#board");
+  if (!cards.length){
+    board.innerHTML = `<div class="empty">Paste your export above and press “Parse cards”.</div>`;
+    $("#exportBox").value = ""; $("#blocklyBox").value = ""; updateStats(0,0,null,[]); $("#warnings").innerHTML = "";
+    return;
+  }
+  const q = $("#search").value.trim().toLowerCase();
+  const groups = groupCards();
+  let offBuckets = 0;
+  let html = "";
+  for (const d of DECKS){
+    const dc = cards.filter(c => c.deck === d.id);
+    const extraAsp = [...new Set(dc.map(c=>c.cur.aspect))].filter(a => !d.aspects.includes(a) && a !== d.neutral);
+    const extraRar = [...new Set(dc.map(c=>c.cur.rarity))].filter(r => !RARITIES.includes(r));
+    const rows = [...RARITIES, ...extraRar];
+    const panels = [...d.aspects, d.neutral, ...extraAsp];
+    const perAspTarget = LOYALTIES.reduce((s,l)=>s + d.targets[l].reduce((a,b)=>a+b,0), 0);
+    const chg = dc.filter(isChanged).length, nw = dc.filter(c=>c.isNew).length;
+
+    let ph = "";
+    for (const a of panels){
+      const isTarget = d.aspects.includes(a);
+      const ac = dc.filter(c => c.cur.aspect === a).length;
+      let tot = `<span class="tot cnt none">${ac} cards</span>`;
+      if (isTarget){
+        const cls = ac === perAspTarget ? "ok" : ac > perAspTarget ? "over" : "under";
+        tot = `<span class="tot cnt ${cls}">${ac} / ${perAspTarget}</span>`;
+      }
+      let cells = LOYALTIES.map(l => `<div class="colhead">${l}</div>`).join("");
+      for (const r of rows){
+        for (const l of LOYALTIES){
+          const list = groups.get([d.id,a,l,r].join("|")) || [];
+          const t = targetFor(d, a, l, r);
+          if (t !== null && list.length !== t) offBuckets++;
+          cells += `<div class="cell" data-deck="${d.id}" data-aspect="${esc(a)}" data-loyalty="${l}" data-rarity="${esc(r)}">
+            <div class="chead"><span class="rar" style="--c:${RCOLOR[r]||"var(--muted)"}">${esc(rarLabel(r))}</span>
+              <span style="display:flex;align-items:center">${cntBadge(list.length,t)}<button class="cnt plus" data-act="add" title="Create new card in this bucket" style="background:none">＋</button></span></div>
+            ${list.map(c=>chipHTML(c,q)).join("")}</div>`;
+        }
+      }
+      ph += `<div class="panel"><div class="phead"><span>${esc(aspLabel(a))}${isTarget?"":" <small style='font-weight:400;color:var(--muted)'>(neutral – no targets)</small>"}</span>${tot}</div><div class="grid">${cells}</div></div>`;
+    }
+
+    const tgRows = LOYALTIES.map(l => `<tr><th>${l}</th>${d.targets[l].map((v,i)=>`<td><input type="number" min="0" value="${v}" data-tg="${d.id}|${l}|${i}"></td>`).join("")}<td>= ${d.targets[l].reduce((a,b)=>a+b,0)}</td></tr>`).join("");
+    html += `<section class="deck" data-deckid="${d.id}">
+      <div class="deckhead"><h2>${d.title}</h2>
+        <span class="meta">${dc.length} cards · ${chg} changed · ${nw} new · target per aspect: ${perAspTarget}</span></div>
+      <details class="targets" data-open="${d.id}" ${openTargets.has(d.id)?"open":""}><summary>Edit targets per aspect</summary>
+        <table class="tg"><tr><th></th>${RARITIES.map(r=>`<th>${r}</th>`).join("")}<th>Total</th></tr>${tgRows}</table></details>
+      <div class="panels">${ph}</div></section>`;
+  }
+  board.innerHTML = html;
+  const warns = collectWarnings();
+  const nChanged = cards.filter(isChanged).length, nNew = cards.filter(c=>c.isNew).length;
+  updateStats(nChanged, nNew, offBuckets, warns);
+  $("#exportBox").value = buildExport(warns);
+  $("#blocklyBox").value = buildBlockly();
+  const dup = [...new Set(blocklyDupes())], bw = $("#blocklyWarn");
+  bw.style.display = dup.length ? "block" : "none";
+  bw.textContent = dup.length ? "Name clash: more than one card is named " + dup.map(n => '"' + n + '"').join(", ") + ". The script matches by name, so it would change all of them." : "";
+}
+
+function updateStats(ch, nw, off, warns){
+  $("#stChanged").textContent = `${ch} changed`;
+  $("#stNew").textContent = `${nw} new`;
+  const so = $("#stOff");
+  if (off === null){ so.textContent = "–"; so.className = "stat"; }
+  else { so.textContent = off === 0 ? "All buckets on target" : `${off} bucket${off===1?"":"s"} off target`; so.className = "stat " + (off===0?"good":"bad"); }
+  const sw = $("#stWarn");
+  sw.textContent = `${warns.length} warning${warns.length===1?"":"s"}`;
+  sw.className = "stat" + (warns.length ? " bad" : "");
+  $("#warnings").innerHTML = warns.length ? `<div class="warnbox"><b>Warnings (not blocking):</b><ul>${warns.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>` : "";
+}
+
+function collectWarnings(){
+  const w = [];
+  for (const c of cards){
+    const j = jumpSteps(c);
+    if (j > 1) w.push(`"${c.name}" (${deckById(c.deck).title}): rarity ${c.orig.rarity} → ${c.cur.rarity} is a ${j}-step jump (you prefer one step at a time).`);
+  }
+  return w;
+}
+
+/* ---------- export ---------- */
+function buildExport(warns){
+  const L = [];
+  const nCh = cards.filter(isChanged).length, nNew = cards.filter(c=>c.isNew).length;
+  L.push("ECHO OF OMENS: RARITY REBALANCE INSTRUCTIONS");
+  L.push(`${nCh} existing card(s) to change, ${nNew} new card(s) to create. No cards are removed.`);
+  L.push("");
+  for (const d of DECKS){
+    const dc = cards.filter(c => c.deck === d.id);
+    const chg = dc.filter(isChanged), nw = dc.filter(c => c.isNew);
+    L.push("=".repeat(60)); L.push(d.title.toUpperCase()); L.push("=".repeat(60));
+    if (!chg.length && !nw.length){ L.push("(no changes)"); L.push(""); }
+    if (chg.length){
+      L.push(`CHANGES TO EXISTING CARDS (${chg.length}):`);
+      const names = {}; dc.forEach(c => names[c.name] = (names[c.name]||0)+1);
+      for (const c of chg){
+        L.push(`* ${c.name}  [${c.type}]${names[c.name]>1 ? "  (id " + c.id + ")" : ""}`);
+        if (c.orig.rarity !== c.cur.rarity) L.push(`    Rarity:  ${rarLabel(c.orig.rarity)} -> ${rarLabel(c.cur.rarity)}${hasJump(c) ? "   !! "+jumpSteps(c)+"-step jump" : ""}`);
+        if (c.orig.loyalty !== c.cur.loyalty) L.push(`    Loyalty: ${c.orig.loyalty} -> ${c.cur.loyalty}`);
+        if (c.orig.aspect !== c.cur.aspect) L.push(`    Aspect:  ${aspLabel(c.orig.aspect)} -> ${aspLabel(c.cur.aspect)}`);
+      }
+      L.push("");
+    }
+    if (nw.length){
+      L.push(`NEW CARDS TO CREATE (${nw.length}):`);
+      for (const c of nw){
+        L.push(`* ${c.name}  [${c.type}]`);
+        L.push(`    Aspect: ${aspLabel(c.cur.aspect)}   Loyalty: ${c.cur.loyalty}   Rarity: ${rarLabel(c.cur.rarity)}`);
+      }
+      L.push("");
+    }
+  }
+  L.push("=".repeat(60)); L.push("BUCKETS STILL OFF TARGET (for reference)"); L.push("=".repeat(60));
+  const groups = groupCards(); let any = false;
+  for (const d of DECKS) for (const a of d.aspects) for (const l of LOYALTIES) RARITIES.forEach((r,i) => {
+    const n = (groups.get([d.id,a,l,r].join("|"))||[]).length, t = d.targets[l][i];
+    if (n !== t){ any = true; L.push(`${d.title} / ${a} / ${l} / ${r}: ${n} (target ${t}, ${n>t?"over by "+(n-t):"short by "+(t-n)})`); }
+  });
+  if (!any) L.push("None. Every bucket is on target.");
+  if (warns.length){ L.push(""); L.push("WARNINGS:"); warns.forEach(w => L.push("- " + w)); }
+  return L.join("\n");
+}
+
+
+/* ---------- Blockly export ---------- */
+const BLK_VAR = "eIUX1Sn0p4~jRL-3SVxI";
+let blkSeq = 0;
+const bid = () => { blkSeq++; return "b" + Math.random().toString(36).slice(2, 10) + blkSeq.toString(36); };
+const bText = t => ({block:{type:"text",id:bid(),fields:{TEXT:t}}});
+const bShadow = t => ({shadow:{type:"text",id:bid(),fields:{TEXT:t}}});
+const bCard = () => ({block:{type:"variables_get",id:bid(),fields:{VAR:{id:BLK_VAR}}}});
+function bModify(field, kind, value){
+  return {type:"elements_modify_custom_field",id:bid(),inputs:{
+    ELEMENT:bCard(), FIELD:bShadow(field),
+    VALUE:{block:{type:"get_element_by_name",id:bid(),inputs:{TYPE:bShadow(kind),NAME:bShadow(value)}}}}};
+}
+function bIf(c){
+  const mods = [];
+  if (c.orig.rarity !== c.cur.rarity) mods.push(bModify("rarity","Rarities",c.cur.rarity));
+  if (c.orig.loyalty !== c.cur.loyalty) mods.push(bModify("loyalty","Loyalties",c.cur.loyalty));
+  if (c.orig.aspect !== c.cur.aspect) mods.push(bModify("aspect","Aspects",c.cur.aspect));
+  for (let i = mods.length - 2; i >= 0; i--) mods[i].next = {block:mods[i+1]};
+  return {type:"controls_if",id:bid(),inputs:{
+    IF0:{block:{type:"logic_compare",id:bid(),fields:{OP:"EQ"},inputs:{
+      A:{block:{type:"get_element_name",id:bid(),inputs:{ELEMENT:bCard()}}}, B:bText(c.name)}}},
+    DO0:{block:mods[0]}}};
+}
+function buildBlockly(){
+  const chg = cards.filter(c => isChanged(c));
+  const ifs = chg.map(bIf);
+  for (let i = ifs.length - 2; i >= 0; i--) ifs[i].next = {block:ifs[i+1]};
+  const loop = {type:"controls_forEach",id:bid(),x:169,y:168,fields:{VAR:{id:BLK_VAR}},inputs:{
+    LIST:{block:{type:"get_all_cards",id:bid()}}}};
+  if (ifs.length) loop.inputs.DO = {block:ifs[0]};
+  return JSON.stringify({blocks:{languageVersion:0,blocks:[loop]},
+    variables:[{name:"card",id:BLK_VAR},{name:"item",id:"h?nIUCm*e%y|0Ij-jqzT"}]});
+}
+function blocklyDupes(){
+  const n = {}; cards.forEach(c => n[c.name] = (n[c.name]||0) + 1);
+  return cards.filter(c => isChanged(c) && n[c.name] > 1).map(c => c.name);
+}
+
+/* ---------- events ---------- */
+$("#parseBtn").onclick = () => doParse(false);
+$("#search").oninput = render;
+$("#toExport").onclick = () => $("#exportSec").scrollIntoView({behavior:"smooth"});
+$("#resetAll").onclick = () => {
+  if (!cards.length || !confirm("Undo all moves and remove all new cards?")) return;
+  cards = cards.filter(c => !c.isNew); cards.forEach(c => c.cur = {...c.orig}); save(); render();
+};
+
+const board = $("#board");
+board.addEventListener("dragstart", e => {
+  const el = e.target.closest(".card"); if (!el) return;
+  dragCard = cards.find(c => c.uid === +el.dataset.uid);
+  e.dataTransfer.setData("text/plain", String(dragCard.uid));
+  e.dataTransfer.effectAllowed = "move";
+  setTimeout(() => document.querySelectorAll(".deck").forEach(s => s.classList.toggle("faded", s.dataset.deckid !== dragCard.deck)), 0);
+});
+board.addEventListener("dragend", () => {
+  dragCard = null;
+  document.querySelectorAll(".deck").forEach(s => s.classList.remove("faded"));
+  document.querySelectorAll(".over-drop").forEach(s => s.classList.remove("over-drop"));
+});
+board.addEventListener("dragover", e => {
+  const cell = e.target.closest(".cell");
+  if (!cell || !dragCard || cell.dataset.deck !== dragCard.deck) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = "move";
+  document.querySelectorAll(".over-drop").forEach(s => { if (s !== cell) s.classList.remove("over-drop"); });
+  cell.classList.add("over-drop");
+});
+board.addEventListener("drop", e => {
+  const cell = e.target.closest(".cell");
+  if (!cell || !dragCard || cell.dataset.deck !== dragCard.deck) return;
+  e.preventDefault();
+  dragCard.cur = {aspect:cell.dataset.aspect, loyalty:cell.dataset.loyalty, rarity:cell.dataset.rarity};
+  dragCard = null; save(); render();
+});
+board.addEventListener("click", e => {
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  const act = b.dataset.act;
+  if (act === "add"){
+    const cell = b.closest(".cell");
+    openNew({deck:cell.dataset.deck, aspect:cell.dataset.aspect, loyalty:cell.dataset.loyalty, rarity:cell.dataset.rarity});
+    return;
+  }
+  const c = cards.find(x => x.uid === +b.closest(".card").dataset.uid);
+  if (act === "reset") c.cur = {...c.orig};
+  if (act === "del") cards = cards.filter(x => x !== c);
+  save(); render();
+});
+board.addEventListener("dblclick", e => {
+  const el = e.target.closest(".card"); if (!el) return;
+  const c = cards.find(x => x.uid === +el.dataset.uid);
+  if (!c.isNew && isChanged(c)){ c.cur = {...c.orig}; save(); render(); }
+});
+board.addEventListener("change", e => {
+  const tg = e.target.dataset.tg; if (!tg) return;
+  const [did, loy, i] = tg.split("|");
+  deckById(did).targets[loy][+i] = Math.max(0, parseInt(e.target.value, 10) || 0);
+  save(); render();
+});
+board.addEventListener("toggle", e => {
+  const id = e.target.dataset && e.target.dataset.open; if (!id) return;
+  e.target.open ? openTargets.add(id) : openTargets.delete(id);
+}, true);
+
+/* new card dialog */
+const dlg = $("#dlg");
+function fillSel(sel, vals, labelFn){ sel.innerHTML = vals.map(v => `<option value="${esc(v)}">${esc(labelFn ? labelFn(v) : v)}</option>`).join(""); }
+function syncDeck(){
+  const d = deckById($("#nDeck").value);
+  fillSel($("#nType"), d.types);
+  fillSel($("#nAspect"), [...d.aspects, d.neutral]);
+}
+function openNew(pre){
+  fillSel($("#nDeck"), DECKS.map(d=>d.id), id => deckById(id).title);
+  fillSel($("#nRar"), RARITIES);
+  pre = pre || {};
+  if (pre.deck) $("#nDeck").value = pre.deck;
+  syncDeck();
+  const d = deckById($("#nDeck").value);
+  if (pre.aspect && [...d.aspects, d.neutral].includes(pre.aspect)) $("#nAspect").value = pre.aspect;
+  if (pre.loyalty) $("#nLoy").value = pre.loyalty;
+  if (pre.rarity && RARITIES.includes(pre.rarity)) $("#nRar").value = pre.rarity;
+  $("#nName").value = "";
+  dlg.showModal(); $("#nName").focus();
+}
+$("#newBtn").onclick = () => { if (!cards.length){ alert("Parse your export first."); return; } openNew(); };
+$("#nDeck").onchange = syncDeck;
+$("#nCancel").onclick = () => dlg.close();
+$("#dlgForm").addEventListener("submit", () => {
+  const name = $("#nName").value.trim(); if (!name) return;
+  cards.push({uid:++uidCounter,id:"",type:$("#nType").value,name,deck:$("#nDeck").value,orig:null,
+    cur:{aspect:$("#nAspect").value,loyalty:$("#nLoy").value,rarity:$("#nRar").value},isNew:true});
+  save(); render();
+});
+
+/* export buttons */
+$("#copyBtn").onclick = async () => {
+  const t = $("#exportBox").value, s = $("#copyStatus");
+  try { await navigator.clipboard.writeText(t); s.textContent = "Copied."; }
+  catch(e){ $("#exportBox").select(); document.execCommand("copy"); s.textContent = "Copied."; }
+  setTimeout(() => s.textContent = "", 2500);
+};
+$("#dlBtn").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([$("#exportBox").value], {type:"text/plain"}));
+  a.download = "echo-of-omens-rarity-changes.txt"; a.click(); URL.revokeObjectURL(a.href);
+};
+
+$("#copyBlk").onclick = async () => {
+  const t = $("#blocklyBox").value, st = $("#blkStatus");
+  try { await navigator.clipboard.writeText(t); } catch(e){ $("#blocklyBox").select(); document.execCommand("copy"); }
+  st.textContent = "Copied."; setTimeout(() => st.textContent = "", 2500);
+};
+$("#dlBlk").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([$("#blocklyBox").value], {type:"application/json"}));
+  a.download = "echo-of-omens-rarity-blockly.json"; a.click(); URL.revokeObjectURL(a.href);
+};
+
+restore();
+</script>
+</body>
+</html>
