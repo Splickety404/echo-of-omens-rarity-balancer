@@ -97,6 +97,11 @@ details.iconsum summary{cursor:pointer;color:var(--accent)}
 table.itab{border-collapse:collapse;font-size:12px}
 table.itab th,table.itab td{padding:2px 8px;text-align:center;border-bottom:1px solid var(--line)}
 table.itab th:first-child{text-align:left}
+.card.ico-none{box-shadow:inset 0 0 0 2px var(--over)}
+.card.ico-one{box-shadow:inset 0 0 0 2px var(--under)}
+.wk{display:inline-block;font-size:10.5px;font-weight:700;border-radius:99px;padding:0 6px;margin-left:5px}
+.wk-none{background:var(--overbg);color:var(--over)}
+.wk-one{background:var(--underbg);color:var(--under)}
 .card.pairoff{opacity:.35}
 .pairs{background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin:10px 0}
 .pairs h2{margin:0 0 4px;font-size:16px}
@@ -159,11 +164,12 @@ dialog input,dialog select{width:100%}
     <span class="stat" id="stChanged">0 changed</span>
     <span class="stat" id="stNew">0 new</span>
     <span class="stat" id="stOff">–</span>
+    <span class="stat" id="stIcons" style="display:none"></span>
   </div>
 
   <div id="warnings"></div>
   <div id="pairs"></div>
-  <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new. Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets. 🔒 striped cards are from older sets than the newest one in the data and cannot be moved; cards with no set listed are movable.</div>
+  <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new. With Edit bonus icons on, red = no icons and amber = a single non-Attack icon (schemes excluded). Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets. 🔒 striped cards are from older sets than the newest one in the data and cannot be moved; cards with no set listed are movable.</div>
 
   <div id="board"><div class="empty">Paste your export above and press “Parse cards”.</div></div>
 
@@ -220,11 +226,18 @@ const DECKS = [
    targets:{Standard:[2,2,2,0],Loyal:[1,1,1,0]}}
 ];
 const ICONS = ["Attack","Block","Arcane","Diplomacy","Stealth"];
-const ICON_EMOJI = {Attack:"\u2694\uFE0F", Block:"\uD83D\uDEE1\uFE0F", Arcane:"\uD83D\uDD2E", Diplomacy:"\uD83D\uDDE3\uFE0F", Stealth:"\uD83E\uDD77"};
+const ICON_EMOJI = {Attack:"\u2694\uFE0F", Block:"\uD83D\uDEE1\uFE0F", Arcane:"\uD83D\uDD2E", Diplomacy:"\uD83E\uDD1D", Stealth:"\uD83E\uDD2B"};
 const emo = n => ICON_EMOJI[n] || "\u2753";
 const iconTotal = ic => ICONS.reduce((s,n) => s + (ic[n]||0), 0);
 const iconList = ic => ICONS.flatMap(n => Array(ic[n]||0).fill(n));
 const iconsEqual = (a,b) => ICONS.every(n => (a[n]||0) === (b[n]||0));
+const weakKind = c => {
+  if (c.deleted || c.type === "O - Scheme") return "";
+  const t = iconTotal(c.icons);
+  if (t === 0) return "none";
+  if (t === 1 && !(c.icons.Attack === 1)) return "one";
+  return "";
+};
 const iconEmojiStr = ic => iconList(ic).map(emo).join("");
 const DEFAULT_TARGETS = JSON.parse(JSON.stringify(DECKS.map(d=>d.targets)));
 const STORE = "eoo-rarity-balancer-v1";
@@ -382,6 +395,8 @@ function chipHTML(c, q){
   const cls = ["card"];
   if (isLocked(c)) cls.push("locked");
   if (pairMode() && !isPairType(c)) cls.push("pairoff");
+  const wk = editIcons() ? weakKind(c) : "";
+  if (wk) cls.push("ico-" + wk);
   if (c.isNew) cls.push("isnew"); else if (isChanged(c)) cls.push("changed");
   if (q){ cls.push(c.name.toLowerCase().includes(q) ? "hit" : "dim"); }
   const btn = (c.isNew ? `<button class="btn" data-act="del" title="Remove this new card">✕</button>`
@@ -389,7 +404,7 @@ function chipHTML(c, q){
     + (!c.isNew && !isLocked(c) ? `<button class="btn btn2" data-act="cut" title="Delete card (rarity becomes Blank)">🗑</button>` : "");
   return `<div class="${cls.join(" ")}" draggable="${isLocked(c) ? "false" : "true"}" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
     ${showCost() && c.info && c.info.cost !== "" ? `<span class="cost" title="Card cost">${esc(c.info.cost)}</span>` : ""}<span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the newest set">🔒 ${esc(c.setLabel)}</span>` : ""}
-    ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${editIcons() ? iconRow(c) : ""}${btn}</div>`;
+    ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${wk ? `<span class="wk wk-${wk}">⚠ ${wk === "none" ? "no bonus icons" : "only 1 icon"}</span>` : ""}${editIcons() ? iconRow(c) : ""}${btn}</div>`;
 }
 
 function render(){
@@ -465,6 +480,12 @@ function render(){
 function updateStats(ch, nw, off, warns){
   $("#stChanged").textContent = `${ch} changed`;
   $("#stNew").textContent = `${nw} new`;
+  const si = $("#stIcons");
+  if (editIcons()){
+    const n0 = cards.filter(c => weakKind(c) === "none").length, n1 = cards.filter(c => weakKind(c) === "one").length;
+    si.style.display = ""; si.textContent = `⚠ ${n0} no icons · ${n1} only 1 icon`; si.className = "stat" + (n0 + n1 ? " bad" : " good");
+    si.title = "Cards (excluding schemes) with no bonus icons, or a single non-Attack icon";
+  } else si.style.display = "none";
   const so = $("#stOff");
   if (off === null){ so.textContent = "–"; so.className = "stat"; }
   else { so.textContent = off === 0 ? "All buckets on target" : `${off} bucket${off===1?"":"s"} off target`; so.className = "stat " + (off===0?"good":"bad"); }
