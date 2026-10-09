@@ -86,6 +86,11 @@ table.tg input{width:46px;text-align:center;padding:3px}
 .card.hit{box-shadow:0 0 0 3px #ffd43b}
 .card .btn{position:absolute;top:1px;right:2px;display:none;padding:0 5px;line-height:16px;font-size:11px}
 .card:hover .btn{display:block}
+#tip{position:fixed;z-index:100;max-width:340px;pointer-events:none;display:none;background:var(--panel);color:var(--text);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.3);font-size:12.5px}
+#tip .tn{font-weight:700;font-size:13.5px}
+#tip .tm{color:var(--muted);font-size:11.5px;margin:1px 0 5px}
+#tip .ta{white-space:pre-wrap}
+#tip .tz{color:var(--muted);font-style:italic}
 .legend{font-size:12px;color:var(--muted);margin:6px 0}
 #exportBox{height:340px}
 .exp{margin-top:22px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
@@ -150,6 +155,7 @@ dialog input,dialog select{width:100%}
   </div>
 </div>
 
+<div id="tip"></div>
 <dialog id="dlg">
   <form method="dialog" id="dlgForm">
     <h3 style="margin:0 0 6px">Create new card</h3>
@@ -206,7 +212,7 @@ function parseExport(text){
     const deck = DECKS.find(d => d.types.includes(type));
     if (!deck || (loyalty !== "Standard" && loyalty !== "Loyal")){ skipped++; continue; }
     const o = {aspect:g("aspect"), loyalty, rarity:g("rarity")};
-    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o}, isNew:false});
+    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o}, isNew:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:g("ability").replace(/\\n/g,"\n").trim()}});
   }
   return out;
 }
@@ -290,7 +296,7 @@ function chipHTML(c, q){
   if (q){ cls.push(c.name.toLowerCase().includes(q) ? "hit" : "dim"); }
   const btn = c.isNew ? `<button class="btn" data-act="del" title="Remove this new card">✕</button>`
             : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "";
-  return `<div class="${cls.join(" ")}" draggable="true" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" title="${esc(c.type)}${c.id?" · "+esc(c.id):""}">
+  return `<div class="${cls.join(" ")}" draggable="true" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
     <span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>
     ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${btn}</div>`;
 }
@@ -525,6 +531,32 @@ board.addEventListener("toggle", e => {
   const id = e.target.dataset && e.target.dataset.open; if (!id) return;
   e.target.open ? openTargets.add(id) : openTargets.delete(id);
 }, true);
+
+/* hover tooltip with card ability */
+const tip = $("#tip");
+function placeTip(e){
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + w > innerWidth - 8) x = e.clientX - w - 14;
+  if (y + h > innerHeight - 8) y = innerHeight - h - 8;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+board.addEventListener("mousemove", e => {
+  const el = e.target.closest(".card");
+  if (!el || dragCard){ tip.style.display = "none"; return; }
+  const c = cards.find(x => x.uid === +el.dataset.uid); if (!c) return;
+  if (tip.dataset.uid !== el.dataset.uid){
+    tip.dataset.uid = el.dataset.uid;
+    const i = c.info || {};
+    const meta = [c.type, i.cost !== undefined && i.cost !== "" ? "Cost " + i.cost : "", i.traits].filter(Boolean).join(" · ");
+    tip.innerHTML = `<div class="tn">${esc(c.name)}${i.subtitle && i.subtitle !== "-" ? ` <span class="tm">${esc(i.subtitle)}</span>` : ""}</div>
+      <div class="tm">${esc(meta)}</div>
+      ${i.ability ? `<div class="ta">${esc(i.ability)}</div>` : `<div class="tz">${c.isNew ? "New card: no ability text." : "No ability text."}</div>`}`;
+  }
+  tip.style.display = "block"; placeTip(e);
+});
+board.addEventListener("mouseleave", () => { tip.style.display = "none"; tip.dataset.uid = ""; });
+board.addEventListener("dragstart", () => { tip.style.display = "none"; });
 
 /* new card dialog */
 const dlg = $("#dlg");
