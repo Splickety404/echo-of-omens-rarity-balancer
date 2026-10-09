@@ -169,6 +169,7 @@ dialog input,dialog select{width:100%}
 
   <div id="warnings"></div>
   <div id="pairs"></div>
+  <div id="icontotals"></div>
   <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new. With Edit bonus icons on, red = no icons and amber = a single non-Attack icon (schemes excluded). Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets. 🔒 striped cards are from older sets than the newest one in the data and cannot be moved; cards with no set listed are movable.</div>
 
   <div id="board"><div class="empty">Paste your export above and press “Parse cards”.</div></div>
@@ -411,7 +412,7 @@ function render(){
   const board = $("#board");
   if (!cards.length){
     board.innerHTML = `<div class="empty">Paste your export above and press “Parse cards”.</div>`;
-    $("#exportBox").value = ""; $("#blocklyBox").value = ""; $("#pairs").innerHTML = ""; updateStats(0,0,null,[]); $("#warnings").innerHTML = "";
+    $("#exportBox").value = ""; $("#blocklyBox").value = ""; $("#pairs").innerHTML = ""; $("#icontotals").innerHTML = ""; updateStats(0,0,null,[]); $("#warnings").innerHTML = "";
     return;
   }
   const q = $("#search").value.trim().toLowerCase();
@@ -467,6 +468,7 @@ function render(){
   }
   board.innerHTML = html;
   renderPairs();
+  renderIconTotals();
   const warns = [];
   const nChanged = cards.filter(isChanged).length, nNew = cards.filter(c=>c.isNew).length;
   updateStats(nChanged, nNew, offBuckets, warns);
@@ -512,6 +514,26 @@ function maxPairs(pool, copies){
   for (let k = 0; k < 5; k++){ const m = Math.min(n[k], n[10-k]); pairs += m; n[k] -= m; n[10-k] -= m; }
   pairs += Math.floor(n[5] / 2); n[5] %= 2;
   return {pairs, hist, left:n};
+}
+function renderIconTotals(){
+  const el = $("#icontotals");
+  if (!editIcons() || !cards.length){ el.innerHTML = ""; return; }
+  const groups = [
+    {label:"Champion", test:c => c.deck === "champ"},
+    {label:"Overlord", test:c => c.deck !== "champ"},
+    {label:"Entire cardpool", test:() => true}
+  ];
+  const rows = groups.map(g => {
+    const cur = cards.filter(c => !c.deleted && g.test(c));
+    const t = sumIcons(cur), tot = iconTotal(t);
+    const o = {};
+    cards.filter(c => !c.isNew && g.test(c)).forEach(c => ICONS.forEach(n => o[n] = (o[n]||0) + (c.origIcons[n]||0)));
+    const dl = (a, b) => a === b ? "" : ` <span class="${a > b ? "up" : "down"}">${a > b ? "+" : ""}${a - b}</span>`;
+    return `<tr><td>${g.label === "Entire cardpool" ? "<b>" + g.label + "</b>" : g.label}</td><td>${cur.length}</td>${ICONS.map(n => `<td>${t[n]||0}${dl(t[n]||0, o[n]||0)}</td>`).join("")}<td><b>${tot}</b>${dl(tot, iconTotal(o))}</td><td>${cur.length ? (tot / cur.length).toFixed(2) : "–"}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<div class="pairs" style="border-color:var(--line)"><h2>Bonus icon totals in the cardpool</h2>
+    <div class="sub">Counts every loaded card in the Champion, Overlord main and scheme decks (neutral included, deleted cards excluded). Green/red numbers show the change from your original export.</div>
+    <table class="ptab" style="margin-top:6px"><tr><th>Side</th><th>Cards</th>${ICONS.map(n => `<th title="${n}">${emo(n)} ${n}</th>`).join("")}<th>Total</th><th>Per card</th></tr>${rows}</table></div>`;
 }
 function renderPairs(){
   const el = $("#pairs");
