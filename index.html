@@ -85,6 +85,19 @@ table.tg input{width:46px;text-align:center;padding:3px}
 .card.locked{cursor:not-allowed;background:repeating-linear-gradient(135deg,var(--chip),var(--chip) 6px,var(--panel2) 6px,var(--panel2) 12px)}
 .card .lk{font-size:10.5px;color:var(--muted);margin-left:5px}
 .card .cost{display:inline-block;min-width:17px;height:17px;line-height:17px;text-align:center;border-radius:50%;background:var(--accent);color:#fff;font-size:10.5px;font-weight:700;margin-right:5px;vertical-align:1px}
+.ibrow{display:flex;flex-wrap:wrap;gap:3px;margin-top:3px}
+.ib{display:inline-flex;align-items:center;gap:1px;border:1px solid var(--line);border-radius:99px;background:var(--panel2);font-size:11px;padding:0 1px}
+.ib.zero{opacity:.55}
+.ib b{margin-left:2px;min-width:8px;display:inline-block;text-align:center}
+.ib button{padding:0;width:16px;height:16px;line-height:13px;border-radius:50%;font-size:12px;font-weight:700}
+.ib button:disabled{opacity:.3;cursor:not-allowed}
+.isum{font-size:11px;margin:0 0 4px;color:var(--muted)}
+details.iconsum{margin:6px 0 12px;font-size:12.5px}
+details.iconsum summary{cursor:pointer;color:var(--accent)}
+.itabs{display:flex;flex-wrap:wrap;gap:14px;margin-top:6px}
+table.itab{border-collapse:collapse;font-size:12px}
+table.itab th,table.itab td{padding:2px 8px;text-align:center;border-bottom:1px solid var(--line)}
+table.itab th:first-child{text-align:left}
 .card.dim{opacity:.25}
 .card.hit{box-shadow:0 0 0 3px #ffd43b}
 .card .btn{position:absolute;top:1px;right:2px;display:none;padding:0 5px;line-height:16px;font-size:11px}
@@ -122,6 +135,7 @@ dialog input,dialog select{width:100%}
     <button class="primary" id="newBtn">+ Create new card</button>
     <input type="search" id="search" placeholder="Find card by name…" size="22">
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="showCost"> Show card costs</label>
+    <label class="stat" style="cursor:pointer"><input type="checkbox" id="editIcons"> Edit bonus icons</label>
     <button id="resetAll">Reset all changes</button>
     <button id="toExport">Jump to export ↓</button>
     <span class="grow"></span>
@@ -187,6 +201,13 @@ const DECKS = [
   {id:"scheme",title:"Overlord Scheme Deck",types:["O - Scheme"],aspects:["Corruption","Deceit","Wrath"],neutral:"OLNeutral",
    targets:{Standard:[2,2,2,0],Loyal:[1,1,1,0]}}
 ];
+const ICONS = ["Attack","Block","Arcane","Diplomacy","Stealth"];
+const ICON_EMOJI = {Attack:"\u2694\uFE0F", Block:"\uD83D\uDEE1\uFE0F", Arcane:"\uD83D\uDD2E", Diplomacy:"\uD83D\uDDE3\uFE0F", Stealth:"\uD83E\uDD77"};
+const emo = n => ICON_EMOJI[n] || "\u2753";
+const iconTotal = ic => ICONS.reduce((s,n) => s + (ic[n]||0), 0);
+const iconList = ic => ICONS.flatMap(n => Array(ic[n]||0).fill(n));
+const iconsEqual = (a,b) => ICONS.every(n => (a[n]||0) === (b[n]||0));
+const iconEmojiStr = ic => iconList(ic).map(emo).join("");
 const DEFAULT_TARGETS = JSON.parse(JSON.stringify(DECKS.map(d=>d.targets)));
 const STORE = "eoo-rarity-balancer-v1";
 
@@ -221,14 +242,25 @@ function parseExport(text){
       skipped++; if (deck) noLoyaltyIgnored++; continue;
     }
     const o = {aspect:g("aspect"), loyalty, rarity:g("rarity")};
-    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o}, isNew:false, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:g("ability").replace(/\\n/g,"\n").trim()}});
+    const icons = {};
+    g("bonus-icons-scripted").split("/").map(x => x.trim()).filter(Boolean).forEach(n => {
+      if (!ICONS.includes(n)) ICONS.push(n);
+      icons[n] = (icons[n]||0) + 1;
+    });
+    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o}, isNew:false, icons, origIcons:{...icons}, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:g("ability").replace(/\\n/g,"\n").trim()}});
   }
   out.forEach(c => { c.locked = c.setNum !== null && maxSet !== null && c.setNum < maxSet; });
   return out;
 }
 
 /* ---------- state helpers ---------- */
-const changedAttrs = c => c.isNew ? [] : ["aspect","loyalty","rarity"].filter(k => c.orig[k] !== c.cur[k]);
+const changedAttrs = c => {
+  if (c.isNew) return [];
+  const a = ["aspect","loyalty","rarity"].filter(k => c.orig[k] !== c.cur[k]);
+  if (!iconsEqual(c.icons, c.origIcons)) a.push("icons");
+  return a;
+};
+const resetCard = c => { c.cur = {...c.orig}; c.icons = {...c.origIcons}; };
 const isChanged = c => changedAttrs(c).length > 0;
 function jumpSteps(c){
   if (c.isNew) return 0;
@@ -241,8 +273,8 @@ const hasJump = c => jumpSteps(c) > 1;
 function save(){
   try {
     const edits = {};
-    cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = c.cur; });
-    const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur}));
+    cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = {...c.cur, icons:c.icons}; });
+    const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur,icons:c.icons}));
     const targets = DECKS.map(d => d.targets);
     localStorage.setItem(STORE, JSON.stringify({raw:rawText, edits, news, targets}));
   } catch(e){}
@@ -254,8 +286,8 @@ function restore(){
     $("#raw").value = s.raw;
     if (s.targets) s.targets.forEach((t,i)=>{ if (DECKS[i] && t) DECKS[i].targets = t; });
     doParse(true);
-    cards.forEach(c => { const e = s.edits && s.edits[c.id || ("u"+c.uid)]; if (e && !c.locked) c.cur = {...e}; });
-    (s.news||[]).forEach(n => cards.push({uid:++uidCounter,id:"",type:n.type,name:n.name,deck:n.deck,orig:null,cur:{...n.cur},isNew:true}));
+    cards.forEach(c => { const e = s.edits && s.edits[c.id || ("u"+c.uid)]; if (e && !c.locked){ c.cur = {aspect:e.aspect,loyalty:e.loyalty,rarity:e.rarity}; if (e.icons) c.icons = {...e.icons}; } });
+    (s.news||[]).forEach(n => cards.push({uid:++uidCounter,id:"",type:n.type,name:n.name,deck:n.deck,orig:null,cur:{...n.cur},isNew:true,icons:{...(n.icons||{})},origIcons:null}));
     render();
   } catch(e){}
 }
@@ -296,11 +328,40 @@ function cntBadge(n, t){
 }
 
 /* ---------- render ---------- */
+const editIcons = () => $("#editIcons").checked;
+function iconRow(c){
+  return `<div class="ibrow">${ICONS.map(n => {
+    const v = c.icons[n] || 0, dis = c.locked ? " disabled" : "";
+    return `<span class="ib${v ? "" : " zero"}" title="${n}"><button data-act="ic-" data-icon="${n}"${dis}>−</button><span>${emo(n)}<b>${v}</b></span><button data-act="ic+" data-icon="${n}"${dis}>+</button></span>`;
+  }).join("")}</div>`;
+}
+function sumIcons(list){ const t = {}; list.forEach(c => ICONS.forEach(n => t[n] = (t[n]||0) + (c.icons[n]||0))); return t; }
+function cellIcons(list){
+  const t = sumIcons(list), tot = iconTotal(t);
+  return tot ? `<div class="isum" title="Bonus icons in this bucket">${ICONS.filter(n => t[n]).map(n => emo(n) + t[n]).join(" ")} <span>(${tot})</span></div>` : "";
+}
+function iconTable(title, rows){
+  rows = rows.filter(r => r.list.length);
+  const body = rows.map(r => {
+    const t = sumIcons(r.list), tot = iconTotal(t);
+    return `<tr><th>${esc(r.label)}</th><td>${r.list.length}</td>${ICONS.map(n => `<td>${t[n]||0}</td>`).join("")}<td><b>${tot}</b></td><td>${(tot / r.list.length).toFixed(2)}</td></tr>`;
+  }).join("");
+  return `<table class="itab"><tr><th>${title}</th><th>Cards</th>${ICONS.map(n => `<th title="${n}">${emo(n)}</th>`).join("")}<th>Total</th><th>Per card</th></tr>${body}</table>`;
+}
+function iconSummary(d, dc, panels, rows){
+  return `<details class="iconsum" open><summary>Bonus icon balance (no targets, for eyeballing)</summary><div class="itabs">
+    ${iconTable("Aspect", panels.map(a => ({label:aspLabel(a), list:dc.filter(c => c.cur.aspect === a)})))}
+    ${iconTable("Loyalty", LOYALTIES.map(l => ({label:l, list:dc.filter(c => c.cur.loyalty === l)})))}
+    ${iconTable("Rarity", rows.map(r => ({label:rarLabel(r), list:dc.filter(c => c.cur.rarity === r)})))}
+  </div></details>`;
+}
 const showCost = () => $("#showCost").checked;
 function chipHTML(c, q){
   const parts = [];
   if (c.isNew) parts.push("NEW CARD");
-  else changedAttrs(c).forEach(k => parts.push(`${k[0].toUpperCase()+k.slice(1)}: ${aspLabel(c.orig[k])} → ${aspLabel(c.cur[k])}`));
+  else changedAttrs(c).forEach(k => parts.push(k === "icons"
+    ? `Icons: ${iconEmojiStr(c.origIcons) || "none"} → ${iconEmojiStr(c.icons) || "none"}`
+    : `${k[0].toUpperCase()+k.slice(1)}: ${aspLabel(c.orig[k])} → ${aspLabel(c.cur[k])}`));
   const j = jumpSteps(c);
   if (j > 1) parts.push(`⚠ ${j}-step rarity jump`);
   const cls = ["card"];
@@ -312,7 +373,7 @@ function chipHTML(c, q){
             : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "";
   return `<div class="${cls.join(" ")}" draggable="${c.locked ? "false" : "true"}" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
     ${showCost() && c.info && c.info.cost !== "" ? `<span class="cost" title="Card cost">${esc(c.info.cost)}</span>` : ""}<span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the newest set">🔒 ${esc(c.setLabel)}</span>` : ""}
-    ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${btn}</div>`;
+    ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${editIcons() ? iconRow(c) : ""}${btn}</div>`;
 }
 
 function render(){
@@ -353,7 +414,7 @@ function render(){
           cells += `<div class="cell" data-deck="${d.id}" data-aspect="${esc(a)}" data-loyalty="${l}" data-rarity="${esc(r)}">
             <div class="chead"><span class="rar" style="--c:${RCOLOR[r]||"var(--muted)"}">${esc(rarLabel(r))}</span>
               <span style="display:flex;align-items:center">${cntBadge(list.length,t)}<button class="cnt plus" data-act="add" title="Create new card in this bucket" style="background:none">＋</button></span></div>
-            ${list.map(c=>chipHTML(c,q)).join("")}</div>`;
+            ${editIcons() ? cellIcons(list) : ""}${list.map(c=>chipHTML(c,q)).join("")}</div>`;
         }
       }
       ph += `<div class="panel"><div class="phead"><span>${esc(aspLabel(a))}${isTarget?"":" <small style='font-weight:400;color:var(--muted)'>(neutral – no targets)</small>"}</span>${tot}</div><div class="grid">${cells}</div></div>`;
@@ -365,6 +426,7 @@ function render(){
         <span class="meta">${dc.length} cards · ${chg} changed · ${nw} new · target per aspect: ${perAspTarget}</span></div>
       <details class="targets" data-open="${d.id}" ${openTargets.has(d.id)?"open":""}><summary>Edit targets per aspect</summary>
         <table class="tg"><tr><th></th>${RARITIES.map(r=>`<th>${r}</th>`).join("")}<th>Total</th></tr>${tgRows}</table></details>
+      ${editIcons() ? iconSummary(d, dc, panels, rows) : ""}
       <div class="panels">${ph}</div></section>`;
   }
   board.innerHTML = html;
@@ -419,6 +481,7 @@ function buildExport(warns){
         if (c.orig.rarity !== c.cur.rarity) L.push(`    Rarity:  ${rarLabel(c.orig.rarity)} -> ${rarLabel(c.cur.rarity)}${hasJump(c) ? "   !! "+jumpSteps(c)+"-step jump" : ""}`);
         if (c.orig.loyalty !== c.cur.loyalty) L.push(`    Loyalty: ${c.orig.loyalty} -> ${c.cur.loyalty}`);
         if (c.orig.aspect !== c.cur.aspect) L.push(`    Aspect:  ${aspLabel(c.orig.aspect)} -> ${aspLabel(c.cur.aspect)}`);
+        if (!iconsEqual(c.icons, c.origIcons)) L.push(`    Bonus icons: ${iconList(c.origIcons).join(", ") || "(none)"} -> ${iconList(c.icons).join(", ") || "(none)"}`);
       }
       L.push("");
     }
@@ -427,6 +490,7 @@ function buildExport(warns){
       for (const c of nw){
         L.push(`* ${c.name}  [${c.type}]`);
         L.push(`    Aspect: ${aspLabel(c.cur.aspect)}   Loyalty: ${c.cur.loyalty}   Rarity: ${rarLabel(c.cur.rarity)}`);
+        if (iconTotal(c.icons)) L.push(`    Bonus icons: ${iconList(c.icons).join(", ")}`);
       }
       L.push("");
     }
@@ -455,11 +519,18 @@ function bModify(field, kind, value){
     ELEMENT:bCard(), FIELD:bShadow(field),
     VALUE:{block:{type:"get_element_by_name",id:bid(),inputs:{TYPE:bShadow(kind),NAME:bShadow(value)}}}}};
 }
+function bIcons(ic){
+  const list = iconList(ic), items = {};
+  list.forEach((n, i) => { items["ADD" + i] = {block:{type:"get_element_by_name",id:bid(),inputs:{TYPE:bShadow("Bonus Icon Fragments"),NAME:bShadow(n)}}}; });
+  return {type:"elements_modify_custom_field",id:bid(),inputs:{ELEMENT:bCard(),FIELD:bShadow("bonus-icons"),
+    VALUE:{block:{type:"lists_create_with",id:bid(),extraState:{itemCount:list.length},inputs:items}}}};
+}
 function bIf(c){
   const mods = [];
   if (c.orig.rarity !== c.cur.rarity) mods.push(bModify("rarity","Rarities",c.cur.rarity));
   if (c.orig.loyalty !== c.cur.loyalty) mods.push(bModify("loyalty","Loyalties",c.cur.loyalty));
   if (c.orig.aspect !== c.cur.aspect) mods.push(bModify("aspect","Aspects",c.cur.aspect));
+  if (!iconsEqual(c.icons, c.origIcons)) mods.push(bIcons(c.icons));
   for (let i = mods.length - 2; i >= 0; i--) mods[i].next = {block:mods[i+1]};
   return {type:"controls_if",id:bid(),inputs:{
     IF0:{block:{type:"logic_compare",id:bid(),fields:{OP:"EQ"},inputs:{
@@ -485,11 +556,13 @@ function blocklyDupes(){
 $("#parseBtn").onclick = () => doParse(false);
 $("#search").oninput = render;
 try { $("#showCost").checked = localStorage.getItem(STORE + "-cost") === "1"; } catch(e){}
+try { $("#editIcons").checked = localStorage.getItem(STORE + "-icons") === "1"; } catch(e){}
+$("#editIcons").onchange = () => { try { localStorage.setItem(STORE + "-icons", $("#editIcons").checked ? "1" : "0"); } catch(e){} render(); };
 $("#showCost").onchange = () => { try { localStorage.setItem(STORE + "-cost", $("#showCost").checked ? "1" : "0"); } catch(e){} render(); };
 $("#toExport").onclick = () => $("#exportSec").scrollIntoView({behavior:"smooth"});
 $("#resetAll").onclick = () => {
   if (!cards.length || !confirm("Undo all moves and remove all new cards?")) return;
-  cards = cards.filter(c => !c.isNew); cards.forEach(c => c.cur = {...c.orig}); save(); render();
+  cards = cards.filter(c => !c.isNew); cards.forEach(resetCard); save(); render();
 };
 
 const board = $("#board");
@@ -523,20 +596,29 @@ board.addEventListener("drop", e => {
 board.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const act = b.dataset.act;
+  if (act === "ic+" || act === "ic-"){
+    const c = cards.find(x => x.uid === +b.closest(".card").dataset.uid);
+    if (!c || c.locked) return;
+    const n = b.dataset.icon, v = (c.icons[n] || 0) + (act === "ic+" ? 1 : -1);
+    if (v < 0) return;
+    if (v === 0) delete c.icons[n]; else c.icons[n] = v;
+    save(); render(); return;
+  }
   if (act === "add"){
     const cell = b.closest(".cell");
     openNew({deck:cell.dataset.deck, aspect:cell.dataset.aspect, loyalty:cell.dataset.loyalty, rarity:cell.dataset.rarity});
     return;
   }
   const c = cards.find(x => x.uid === +b.closest(".card").dataset.uid);
-  if (act === "reset") c.cur = {...c.orig};
+  if (act === "reset") resetCard(c);
   if (act === "del") cards = cards.filter(x => x !== c);
   save(); render();
 });
 board.addEventListener("dblclick", e => {
+  if (e.target.closest(".ibrow")) return;
   const el = e.target.closest(".card"); if (!el) return;
   const c = cards.find(x => x.uid === +el.dataset.uid);
-  if (!c.isNew && isChanged(c)){ c.cur = {...c.orig}; save(); render(); }
+  if (!c.isNew && isChanged(c)){ resetCard(c); save(); render(); }
 });
 board.addEventListener("change", e => {
   const tg = e.target.dataset.tg; if (!tg) return;
@@ -562,13 +644,13 @@ board.addEventListener("mousemove", e => {
   const el = e.target.closest(".card");
   if (!el || dragCard){ tip.style.display = "none"; return; }
   const c = cards.find(x => x.uid === +el.dataset.uid); if (!c) return;
-  if (tip.dataset.uid !== el.dataset.uid){
-    tip.dataset.uid = el.dataset.uid;
+  if (tip.dataset.uid !== el.dataset.uid + "|" + iconEmojiStr(c.icons)){
+    tip.dataset.uid = el.dataset.uid + "|" + iconEmojiStr(c.icons);
     const i = c.info || {};
     const meta = [c.type, i.cost !== undefined && i.cost !== "" ? "Cost " + i.cost : "", i.traits, c.locked ? "🔒 Locked (" + c.setLabel + ")" : c.setLabel].filter(Boolean).join(" · ");
     tip.innerHTML = `<div class="tn">${esc(c.name)}${i.subtitle && i.subtitle !== "-" ? ` <span class="tm">${esc(i.subtitle)}</span>` : ""}</div>
       <div class="tm">${esc(meta)}</div>
-      ${i.ability ? `<div class="ta">${esc(i.ability)}</div>` : `<div class="tz">${c.isNew ? "New card: no ability text." : "No ability text."}</div>`}`;
+      ${iconTotal(c.icons) ? `<div class="tm">Bonus icons: ${esc(iconEmojiStr(c.icons))}</div>` : ""}${i.ability ? `<div class="ta">${esc(i.ability)}</div>` : `<div class="tz">${c.isNew ? "New card: no ability text." : "No ability text."}</div>`}`;
   }
   tip.style.display = "block"; placeTip(e);
 });
@@ -601,7 +683,7 @@ $("#nDeck").onchange = syncDeck;
 $("#nCancel").onclick = () => dlg.close();
 $("#dlgForm").addEventListener("submit", () => {
   const name = $("#nName").value.trim(); if (!name) return;
-  cards.push({uid:++uidCounter,id:"",type:$("#nType").value,name,deck:$("#nDeck").value,orig:null,
+  cards.push({uid:++uidCounter,id:"",type:$("#nType").value,name,deck:$("#nDeck").value,orig:null,icons:{},origIcons:null,
     cur:{aspect:$("#nAspect").value,loyalty:$("#nLoy").value,rarity:$("#nRar").value},isNew:true});
   save(); render();
 });
