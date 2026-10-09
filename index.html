@@ -80,7 +80,6 @@ table.tg input{width:46px;text-align:center;padding:3px}
 .card.changed{outline:1.5px solid var(--accent)}
 .card.isnew{outline:1.5px dashed var(--new)}
 .card.isnew .chg,.card .newtag{color:var(--new);font-weight:700}
-.card.jump{outline:2px solid var(--over)}
 .card.jump .chg{color:var(--over);font-weight:700}
 .card.locked{cursor:not-allowed;background:repeating-linear-gradient(135deg,var(--chip),var(--chip) 6px,var(--panel2) 6px,var(--panel2) 12px)}
 .card .lk{font-size:10.5px;color:var(--muted);margin-left:5px}
@@ -98,8 +97,22 @@ details.iconsum summary{cursor:pointer;color:var(--accent)}
 table.itab{border-collapse:collapse;font-size:12px}
 table.itab th,table.itab td{padding:2px 8px;text-align:center;border-bottom:1px solid var(--line)}
 table.itab th:first-child{text-align:left}
+.card.pairoff{opacity:.35}
+.pairs{background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin:10px 0}
+.pairs h2{margin:0 0 4px;font-size:16px}
+.pairs .sides{display:flex;flex-wrap:wrap;gap:20px;margin-top:8px}
+table.ptab{border-collapse:collapse;font-size:12.5px}
+table.ptab th,table.ptab td{padding:3px 9px;border-bottom:1px solid var(--line);text-align:center}
+table.ptab th:first-child,table.ptab td:first-child{text-align:left}
+table.ptab tr.best td{background:var(--okbg)}
+.up{color:var(--ok);font-weight:700}.down{color:var(--over);font-weight:700}
 .card.dim{opacity:.25}
 .card.hit{box-shadow:0 0 0 3px #ffd43b}
+.card .btn2{right:24px}
+.card .btn.show{display:block}
+.card.deleted{opacity:.7;text-decoration:line-through;text-decoration-color:var(--over)}
+details.delbox{margin:8px 0 0;font-size:12.5px}
+details.delbox summary{cursor:pointer;color:var(--over)}
 .card .btn{position:absolute;top:1px;right:2px;display:none;padding:0 5px;line-height:16px;font-size:11px}
 .card:hover .btn{display:block}
 #tip{position:fixed;z-index:100;max-width:340px;pointer-events:none;display:none;background:var(--panel);color:var(--text);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.3);font-size:12.5px}
@@ -136,17 +149,21 @@ dialog input,dialog select{width:100%}
     <input type="search" id="search" placeholder="Find card by name…" size="22">
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="showCost"> Show card costs</label>
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="editIcons"> Edit bonus icons</label>
+    <label class="stat" style="cursor:pointer" title="Only allies and lieutenants can be changed; shows 10-cost pair counts"><input type="checkbox" id="pairMode"> Pair mode (allies &amp; lieutenants)</label>
+    <span id="copiesWrap" class="stat" style="display:none">copies per card <input type="number" id="pairCopies" value="1" min="1" style="width:46px"></span>
+    <button id="saveFile" title="Download your progress as a file">Save progress ⬇</button>
+    <button id="loadFile" title="Load a progress file">Load progress ⬆</button><input type="file" id="loadInput" accept=".json,application/json" style="display:none">
     <button id="resetAll">Reset all changes</button>
     <button id="toExport">Jump to export ↓</button>
     <span class="grow"></span>
     <span class="stat" id="stChanged">0 changed</span>
     <span class="stat" id="stNew">0 new</span>
     <span class="stat" id="stOff">–</span>
-    <span class="stat" id="stWarn">0 warnings</span>
   </div>
 
   <div id="warnings"></div>
-  <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new, red outline = rarity jump of more than one step. Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets. 🔒 striped cards are from older sets than the newest one in the data and cannot be moved; cards with no set listed are movable.</div>
+  <div id="pairs"></div>
+  <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new. Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets. 🔒 striped cards are from older sets than the newest one in the data and cannot be moved; cards with no set listed are movable.</div>
 
   <div id="board"><div class="empty">Paste your export above and press “Parse cards”.</div></div>
 
@@ -180,6 +197,7 @@ dialog input,dialog select{width:100%}
     <label>Deck</label><select id="nDeck"></select>
     <label>Card type</label><select id="nType"></select>
     <label>Name</label><input type="text" id="nName" required>
+    <label>Card cost (optional, for pair counts)</label><input type="number" id="nCost" min="0">
     <label>Aspect</label><select id="nAspect"></select>
     <label>Loyalty</label><select id="nLoy"><option>Standard</option><option>Loyal</option></select>
     <label>Rarity</label><select id="nRar"></select>
@@ -255,41 +273,37 @@ function parseExport(text){
 
 /* ---------- state helpers ---------- */
 const changedAttrs = c => {
-  if (c.isNew) return [];
+  if (c.isNew || c.deleted) return [];
   const a = ["aspect","loyalty","rarity"].filter(k => c.orig[k] !== c.cur[k]);
   if (!iconsEqual(c.icons, c.origIcons)) a.push("icons");
   return a;
 };
-const resetCard = c => { c.cur = {...c.orig}; c.icons = {...c.origIcons}; };
-const isChanged = c => changedAttrs(c).length > 0;
-function jumpSteps(c){
-  if (c.isNew) return 0;
-  const a = rIdx(c.orig.rarity), b = rIdx(c.cur.rarity);
-  if (a < 0 || b < 0) return 0;
-  return Math.abs(a - b);
-}
-const hasJump = c => jumpSteps(c) > 1;
+const resetCard = c => { c.deleted = false; c.cur = {...c.orig}; c.icons = {...c.origIcons}; };
+const isChanged = c => !!c.deleted || changedAttrs(c).length > 0;
 
-function save(){
-  try {
-    const edits = {};
-    cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = {...c.cur, icons:c.icons}; });
-    const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur,icons:c.icons}));
-    const targets = DECKS.map(d => d.targets);
-    localStorage.setItem(STORE, JSON.stringify({raw:rawText, edits, news, targets}));
-  } catch(e){}
+function getState(){
+  const edits = {};
+  cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = {...c.cur, icons:c.icons, deleted:!!c.deleted}; });
+  const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur,icons:c.icons,cost:(c.info && c.info.cost) || ""}));
+  return {app:"eoo-rarity-balancer", version:2, savedAt:new Date().toISOString(), raw:rawText, edits, news, targets:DECKS.map(d => d.targets)};
+}
+function save(){ try { localStorage.setItem(STORE, JSON.stringify(getState())); } catch(e){} }
+function applyState(s){
+  if (!s || !s.raw) throw new Error("not a progress file");
+  $("#raw").value = s.raw;
+  if (s.targets) s.targets.forEach((t,i)=>{ if (DECKS[i] && t) DECKS[i].targets = t; });
+  doParse(true);
+  cards.forEach(c => {
+    const e = s.edits && s.edits[c.id || ("u"+c.uid)];
+    if (!e) return;
+    if (e.deleted && !c.locked) c.deleted = true;
+    if (!c.locked){ c.cur = {aspect:e.aspect,loyalty:e.loyalty,rarity:e.rarity}; if (e.icons) c.icons = {...e.icons}; }
+  });
+  (s.news||[]).forEach(n => cards.push({uid:++uidCounter,id:"",type:n.type,name:n.name,deck:n.deck,orig:null,cur:{...n.cur},isNew:true,icons:{...(n.icons||{})},origIcons:null,info:{subtitle:"",cost:n.cost||"",traits:"",ability:""}}));
+  render();
 }
 function restore(){
-  try {
-    const s = JSON.parse(localStorage.getItem(STORE) || "null");
-    if (!s || !s.raw) return;
-    $("#raw").value = s.raw;
-    if (s.targets) s.targets.forEach((t,i)=>{ if (DECKS[i] && t) DECKS[i].targets = t; });
-    doParse(true);
-    cards.forEach(c => { const e = s.edits && s.edits[c.id || ("u"+c.uid)]; if (e && !c.locked){ c.cur = {aspect:e.aspect,loyalty:e.loyalty,rarity:e.rarity}; if (e.icons) c.icons = {...e.icons}; } });
-    (s.news||[]).forEach(n => cards.push({uid:++uidCounter,id:"",type:n.type,name:n.name,deck:n.deck,orig:null,cur:{...n.cur},isNew:true,icons:{...(n.icons||{})},origIcons:null}));
-    render();
-  } catch(e){}
+  try { applyState(JSON.parse(localStorage.getItem(STORE) || "null")); } catch(e){}
 }
 
 function doParse(silent){
@@ -331,7 +345,7 @@ function cntBadge(n, t){
 const editIcons = () => $("#editIcons").checked;
 function iconRow(c){
   return `<div class="ibrow">${ICONS.map(n => {
-    const v = c.icons[n] || 0, dis = c.locked ? " disabled" : "";
+    const v = c.icons[n] || 0, dis = isLocked(c) ? " disabled" : "";
     return `<span class="ib${v ? "" : " zero"}" title="${n}"><button data-act="ic-" data-icon="${n}"${dis}>−</button><span>${emo(n)}<b>${v}</b></span><button data-act="ic+" data-icon="${n}"${dis}>+</button></span>`;
   }).join("")}</div>`;
 }
@@ -355,23 +369,25 @@ function iconSummary(d, dc, panels, rows){
     ${iconTable("Rarity", rows.map(r => ({label:rarLabel(r), list:dc.filter(c => c.cur.rarity === r)})))}
   </div></details>`;
 }
-const showCost = () => $("#showCost").checked;
+const pairMode = () => $("#pairMode").checked;
+const isPairType = c => c.type === "C - Ally" || c.type === "O - Lieutenant";
+const isLocked = c => c.locked || (pairMode() && !isPairType(c));
+const showCost = () => $("#showCost").checked || pairMode();
 function chipHTML(c, q){
   const parts = [];
   if (c.isNew) parts.push("NEW CARD");
   else changedAttrs(c).forEach(k => parts.push(k === "icons"
     ? `Icons: ${iconEmojiStr(c.origIcons) || "none"} → ${iconEmojiStr(c.icons) || "none"}`
     : `${k[0].toUpperCase()+k.slice(1)}: ${aspLabel(c.orig[k])} → ${aspLabel(c.cur[k])}`));
-  const j = jumpSteps(c);
-  if (j > 1) parts.push(`⚠ ${j}-step rarity jump`);
   const cls = ["card"];
-  if (c.locked) cls.push("locked");
+  if (isLocked(c)) cls.push("locked");
+  if (pairMode() && !isPairType(c)) cls.push("pairoff");
   if (c.isNew) cls.push("isnew"); else if (isChanged(c)) cls.push("changed");
-  if (hasJump(c)) cls.push("jump");
   if (q){ cls.push(c.name.toLowerCase().includes(q) ? "hit" : "dim"); }
-  const btn = c.isNew ? `<button class="btn" data-act="del" title="Remove this new card">✕</button>`
-            : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "";
-  return `<div class="${cls.join(" ")}" draggable="${c.locked ? "false" : "true"}" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
+  const btn = (c.isNew ? `<button class="btn" data-act="del" title="Remove this new card">✕</button>`
+            : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "")
+    + (!c.isNew && !isLocked(c) ? `<button class="btn btn2" data-act="cut" title="Delete card (rarity becomes Blank)">🗑</button>` : "");
+  return `<div class="${cls.join(" ")}" draggable="${isLocked(c) ? "false" : "true"}" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
     ${showCost() && c.info && c.info.cost !== "" ? `<span class="cost" title="Card cost">${esc(c.info.cost)}</span>` : ""}<span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the newest set">🔒 ${esc(c.setLabel)}</span>` : ""}
     ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${editIcons() ? iconRow(c) : ""}${btn}</div>`;
 }
@@ -380,7 +396,7 @@ function render(){
   const board = $("#board");
   if (!cards.length){
     board.innerHTML = `<div class="empty">Paste your export above and press “Parse cards”.</div>`;
-    $("#exportBox").value = ""; $("#blocklyBox").value = ""; updateStats(0,0,null,[]); $("#warnings").innerHTML = "";
+    $("#exportBox").value = ""; $("#blocklyBox").value = ""; $("#pairs").innerHTML = ""; updateStats(0,0,null,[]); $("#warnings").innerHTML = "";
     return;
   }
   const q = $("#search").value.trim().toLowerCase();
@@ -388,7 +404,8 @@ function render(){
   let offBuckets = 0;
   let html = "";
   for (const d of DECKS){
-    const dc = cards.filter(c => c.deck === d.id);
+    const dc = cards.filter(c => c.deck === d.id && !c.deleted);
+    const delList = cards.filter(c => c.deck === d.id && c.deleted);
     const extraAsp = [...new Set(dc.map(c=>c.cur.aspect))].filter(a => !d.aspects.includes(a) && a !== d.neutral);
     const extraRar = [...new Set(dc.map(c=>c.cur.rarity))].filter(r => !RARITIES.includes(r));
     const rows = [...RARITIES, ...extraRar];
@@ -405,9 +422,11 @@ function render(){
         const cls = ac === perAspTarget ? "ok" : ac > perAspTarget ? "over" : "under";
         tot = `<span class="tot cnt ${cls}">${ac} / ${perAspTarget}</span>`;
       }
-      let cells = LOYALTIES.map(l => `<div class="colhead">${l}</div>`).join("");
+      const hasLoyalHere = cards.some(c => !c.deleted && c.deck === d.id && c.cur.aspect === a && c.cur.loyalty === "Loyal");
+      const cols = (a === d.neutral && !hasLoyalHere) ? ["Standard"] : LOYALTIES;
+      let cells = cols.map(l => `<div class="colhead">${l}</div>`).join("");
       for (const r of rows){
-        for (const l of LOYALTIES){
+        for (const l of cols){
           const list = groups.get([d.id,a,l,r].join("|")) || [];
           const t = targetFor(d, a, l, r);
           if (t !== null && list.length !== t) offBuckets++;
@@ -417,20 +436,23 @@ function render(){
             ${editIcons() ? cellIcons(list) : ""}${list.map(c=>chipHTML(c,q)).join("")}</div>`;
         }
       }
-      ph += `<div class="panel"><div class="phead"><span>${esc(aspLabel(a))}${isTarget?"":" <small style='font-weight:400;color:var(--muted)'>(neutral – no targets)</small>"}</span>${tot}</div><div class="grid">${cells}</div></div>`;
+      ph += `<div class="panel"><div class="phead"><span>${esc(aspLabel(a))}${isTarget?"":" <small style='font-weight:400;color:var(--muted)'>(neutral – no targets)</small>"}</span>${tot}</div><div class="grid" style="grid-template-columns:repeat(${cols.length},1fr)">${cells}</div></div>`;
     }
 
     const tgRows = LOYALTIES.map(l => `<tr><th>${l}</th>${d.targets[l].map((v,i)=>`<td><input type="number" min="0" value="${v}" data-tg="${d.id}|${l}|${i}"></td>`).join("")}<td>= ${d.targets[l].reduce((a,b)=>a+b,0)}</td></tr>`).join("");
     html += `<section class="deck" data-deckid="${d.id}">
       <div class="deckhead"><h2>${d.title}</h2>
-        <span class="meta">${dc.length} cards · ${chg} changed · ${nw} new · target per aspect: ${perAspTarget}</span></div>
+        <span class="meta">${dc.length} cards · ${chg} changed · ${nw} new · ${delList.length} deleted · target per aspect: ${perAspTarget}</span></div>
       <details class="targets" data-open="${d.id}" ${openTargets.has(d.id)?"open":""}><summary>Edit targets per aspect</summary>
         <table class="tg"><tr><th></th>${RARITIES.map(r=>`<th>${r}</th>`).join("")}<th>Total</th></tr>${tgRows}</table></details>
       ${editIcons() ? iconSummary(d, dc, panels, rows) : ""}
-      <div class="panels">${ph}</div></section>`;
+      <div class="panels">${ph}</div>
+      ${delList.length ? `<details class="delbox" open><summary>Deleted cards (${delList.length}): rarity becomes Blank</summary><div style="margin-top:6px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px">${delList.map(c => `<div class="card deleted" draggable="false" data-uid="${c.uid}" style="--c:var(--muted)"><span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span><span class="chg" style="text-decoration:none">Rarity: ${esc(rarLabel(c.orig.rarity))} → Blank</span><button class="btn show" data-act="undelete" title="Restore card">↩</button></div>`).join("")}</div></details>` : ""}
+    </section>`;
   }
   board.innerHTML = html;
-  const warns = collectWarnings();
+  renderPairs();
+  const warns = [];
   const nChanged = cards.filter(isChanged).length, nNew = cards.filter(c=>c.isNew).length;
   updateStats(nChanged, nNew, offBuckets, warns);
   $("#exportBox").value = buildExport(warns);
@@ -446,43 +468,85 @@ function updateStats(ch, nw, off, warns){
   const so = $("#stOff");
   if (off === null){ so.textContent = "–"; so.className = "stat"; }
   else { so.textContent = off === 0 ? "All buckets on target" : `${off} bucket${off===1?"":"s"} off target`; so.className = "stat " + (off===0?"good":"bad"); }
-  const sw = $("#stWarn");
-  sw.textContent = `${warns.length} warning${warns.length===1?"":"s"}`;
-  sw.className = "stat" + (warns.length ? " bad" : "");
-  $("#warnings").innerHTML = warns.length ? `<div class="warnbox"><b>Warnings (not blocking):</b><ul>${warns.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>` : "";
 }
 
-function collectWarnings(){
-  const w = [];
-  for (const c of cards){
-    const j = jumpSteps(c);
-    if (j > 1) w.push(`"${c.name}" (${deckById(c.deck).title}): rarity ${c.orig.rarity} → ${c.cur.rarity} is a ${j}-step jump (you prefer one step at a time).`);
-  }
-  return w;
+
+/* ---------- pair mode: 10-radiance pairs ---------- */
+function costOf(c){ const v = c.info && c.info.cost !== "" && c.info.cost !== undefined ? parseInt(c.info.cost, 10) : NaN; return v >= 0 && v <= 10 ? v : null; }
+function poolFor(side, loyalAsp, splashAsp, useOrig){
+  const d = deckById(side.deck);
+  return cards.filter(c => {
+    if (c.type !== side.type || c.deck !== side.deck) return false;
+    if (useOrig && c.isNew) return false;
+    if (!useOrig && c.deleted) return false;
+    const pl = useOrig ? c.orig : c.cur;
+    return pl.aspect === d.neutral || pl.aspect === loyalAsp || (pl.aspect === splashAsp && pl.loyalty === "Standard");
+  });
+}
+function maxPairs(pool, copies){
+  const n = Array(11).fill(0);
+  pool.forEach(c => { const v = costOf(c); if (v !== null) n[v] += copies; });
+  const hist = n.slice();
+  let pairs = 0;
+  for (let k = 0; k < 5; k++){ const m = Math.min(n[k], n[10-k]); pairs += m; n[k] -= m; n[10-k] -= m; }
+  pairs += Math.floor(n[5] / 2); n[5] %= 2;
+  return {pairs, hist, left:n};
+}
+function renderPairs(){
+  const el = $("#pairs");
+  $("#copiesWrap").style.display = pairMode() ? "" : "none";
+  if (!pairMode() || !cards.length){ el.innerHTML = ""; return; }
+  const copies = Math.max(1, parseInt($("#pairCopies").value, 10) || 1);
+  const sides = [{deck:"champ",type:"C - Ally",title:"Champion allies"},{deck:"main",type:"O - Lieutenant",title:"Overlord lieutenants"}];
+  const costStr = a => a.map((v, k) => v ? `${k}\u00D7${v}` : "").filter(Boolean).join(" ") || "none";
+  const tables = sides.map(side => {
+    const d = deckById(side.deck);
+    let rows = [], total = 0, totalOrig = 0;
+    d.aspects.forEach(L => d.aspects.forEach(S => {
+      if (S === L) return;
+      const cur = maxPairs(poolFor(side, L, S, false), copies), orig = maxPairs(poolFor(side, L, S, true), copies);
+      total += cur.pairs; totalOrig += orig.pairs;
+      rows.push({label:`Loyal ${L} + Standard ${S}`, pool:poolFor(side, L, S, false).filter(c => costOf(c) !== null).length, cur, orig});
+    }));
+    const best = Math.max(...rows.map(r => r.cur.pairs));
+    const delta = (a, b) => a === b ? "" : ` <span class="${a > b ? "up" : "down"}">${a > b ? "+" : ""}${a - b}</span>`;
+    return `<div><h3 style="margin:0 0 4px;font-size:14px">${side.title}</h3><table class="ptab">
+      <tr><th>Deck type</th><th>Cards</th><th>Pairs</th><th>Was</th><th>Unpaired costs</th></tr>
+      ${rows.map(r => `<tr class="${r.cur.pairs === best ? "best" : ""}" title="Cost counts in pool: ${costStr(r.cur.hist)}"><td>${esc(r.label)}</td><td>${r.pool}</td><td><b>${r.cur.pairs}</b>${delta(r.cur.pairs, r.orig.pairs)}</td><td>${r.orig.pairs}</td><td>${costStr(r.cur.left)}</td></tr>`).join("")}
+      <tr><td><b>Sum of all 6</b></td><td></td><td><b>${total}</b>${delta(total, totalOrig)}</td><td>${totalOrig}</td><td></td></tr></table></div>`;
+  }).join("");
+  el.innerHTML = `<div class="pairs"><h2>10-radiance pairs by deck type</h2>
+    <div class="sub">A deck = one loyal aspect (its Standard and Loyal cards) + one splash aspect (Standard only) + neutral. Each card is used in one pair; cards with no cost are skipped. Highlighted rows are the best deck type; "Was" is your original export; hover a row for its full cost counts.</div>
+    <div class="sides">${tables}</div></div>`;
 }
 
 /* ---------- export ---------- */
 function buildExport(warns){
   const L = [];
-  const nCh = cards.filter(isChanged).length, nNew = cards.filter(c=>c.isNew).length;
+  const nCh = cards.filter(c => isChanged(c) && !c.deleted).length, nNew = cards.filter(c=>c.isNew).length, nDel = cards.filter(c=>c.deleted).length;
   L.push("ECHO OF OMENS: RARITY REBALANCE INSTRUCTIONS");
-  L.push(`${nCh} existing card(s) to change, ${nNew} new card(s) to create. No cards are removed.`);
+  L.push(`${nCh} existing card(s) to change, ${nNew} new card(s) to create, ${nDel} card(s) to delete (set rarity to Blank).`);
   L.push("");
   for (const d of DECKS){
     const dc = cards.filter(c => c.deck === d.id);
-    const chg = dc.filter(isChanged), nw = dc.filter(c => c.isNew);
+    const chg = dc.filter(c => isChanged(c) && !c.deleted), nw = dc.filter(c => c.isNew), del = dc.filter(c => c.deleted);
     L.push("=".repeat(60)); L.push(d.title.toUpperCase()); L.push("=".repeat(60));
-    if (!chg.length && !nw.length){ L.push("(no changes)"); L.push(""); }
+    if (!chg.length && !nw.length && !del.length){ L.push("(no changes)"); L.push(""); }
     if (chg.length){
       L.push(`CHANGES TO EXISTING CARDS (${chg.length}):`);
       const names = {}; dc.forEach(c => names[c.name] = (names[c.name]||0)+1);
       for (const c of chg){
         L.push(`* ${c.name}  [${c.type}]${names[c.name]>1 ? "  (id " + c.id + ")" : ""}`);
-        if (c.orig.rarity !== c.cur.rarity) L.push(`    Rarity:  ${rarLabel(c.orig.rarity)} -> ${rarLabel(c.cur.rarity)}${hasJump(c) ? "   !! "+jumpSteps(c)+"-step jump" : ""}`);
+        if (c.orig.rarity !== c.cur.rarity) L.push(`    Rarity:  ${rarLabel(c.orig.rarity)} -> ${rarLabel(c.cur.rarity)}`);
         if (c.orig.loyalty !== c.cur.loyalty) L.push(`    Loyalty: ${c.orig.loyalty} -> ${c.cur.loyalty}`);
         if (c.orig.aspect !== c.cur.aspect) L.push(`    Aspect:  ${aspLabel(c.orig.aspect)} -> ${aspLabel(c.cur.aspect)}`);
         if (!iconsEqual(c.icons, c.origIcons)) L.push(`    Bonus icons: ${iconList(c.origIcons).join(", ") || "(none)"} -> ${iconList(c.icons).join(", ") || "(none)"}`);
       }
+      L.push("");
+    }
+    if (del.length){
+      L.push(`CARDS TO DELETE (${del.length}), set rarity to Blank:`);
+      del.forEach(c => L.push(`* ${c.name}  [${c.type}]   Rarity: ${rarLabel(c.orig.rarity)} -> Blank`));
       L.push("");
     }
     if (nw.length){
@@ -527,10 +591,12 @@ function bIcons(ic){
 }
 function bIf(c){
   const mods = [];
+  if (c.deleted) mods.push(bModify("rarity","Rarities","Blank")); else {
   if (c.orig.rarity !== c.cur.rarity) mods.push(bModify("rarity","Rarities",c.cur.rarity));
   if (c.orig.loyalty !== c.cur.loyalty) mods.push(bModify("loyalty","Loyalties",c.cur.loyalty));
   if (c.orig.aspect !== c.cur.aspect) mods.push(bModify("aspect","Aspects",c.cur.aspect));
   if (!iconsEqual(c.icons, c.origIcons)) mods.push(bIcons(c.icons));
+  }
   for (let i = mods.length - 2; i >= 0; i--) mods[i].next = {block:mods[i+1]};
   return {type:"controls_if",id:bid(),inputs:{
     IF0:{block:{type:"logic_compare",id:bid(),fields:{OP:"EQ"},inputs:{
@@ -555,6 +621,22 @@ function blocklyDupes(){
 /* ---------- events ---------- */
 $("#parseBtn").onclick = () => doParse(false);
 $("#search").oninput = render;
+try { $("#pairMode").checked = localStorage.getItem(STORE + "-pair") === "1"; } catch(e){}
+$("#pairMode").onchange = () => { try { localStorage.setItem(STORE + "-pair", $("#pairMode").checked ? "1" : "0"); } catch(e){} render(); };
+$("#pairCopies").onchange = render;
+$("#saveFile").onclick = () => {
+  if (!cards.length){ alert("Nothing to save yet."); return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(getState(), null, 1)], {type:"application/json"}));
+  a.download = "echo-of-omens-progress-" + new Date().toISOString().slice(0,10) + ".json"; a.click(); URL.revokeObjectURL(a.href);
+};
+$("#loadFile").onclick = () => $("#loadInput").click();
+$("#loadInput").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { try { applyState(JSON.parse(r.result)); save(); $("#pasteBox").open = false; } catch(err){ alert("Could not load that file: " + err.message); } e.target.value = ""; };
+  r.readAsText(f);
+};
 try { $("#showCost").checked = localStorage.getItem(STORE + "-cost") === "1"; } catch(e){}
 try { $("#editIcons").checked = localStorage.getItem(STORE + "-icons") === "1"; } catch(e){}
 $("#editIcons").onchange = () => { try { localStorage.setItem(STORE + "-icons", $("#editIcons").checked ? "1" : "0"); } catch(e){} render(); };
@@ -590,7 +672,8 @@ board.addEventListener("drop", e => {
   const cell = e.target.closest(".cell");
   if (!cell || !dragCard || cell.dataset.deck !== dragCard.deck) return;
   e.preventDefault();
-  dragCard.cur = {aspect:cell.dataset.aspect, loyalty:cell.dataset.loyalty, rarity:cell.dataset.rarity};
+  const neutral = deckById(dragCard.deck).neutral;
+  dragCard.cur = {aspect:cell.dataset.aspect, loyalty:cell.dataset.aspect === neutral ? "Standard" : cell.dataset.loyalty, rarity:cell.dataset.rarity};
   dragCard = null; save(); render();
 });
 board.addEventListener("click", e => {
@@ -598,7 +681,7 @@ board.addEventListener("click", e => {
   const act = b.dataset.act;
   if (act === "ic+" || act === "ic-"){
     const c = cards.find(x => x.uid === +b.closest(".card").dataset.uid);
-    if (!c || c.locked) return;
+    if (!c || isLocked(c)) return;
     const n = b.dataset.icon, v = (c.icons[n] || 0) + (act === "ic+" ? 1 : -1);
     if (v < 0) return;
     if (v === 0) delete c.icons[n]; else c.icons[n] = v;
@@ -611,6 +694,8 @@ board.addEventListener("click", e => {
   }
   const c = cards.find(x => x.uid === +b.closest(".card").dataset.uid);
   if (act === "reset") resetCard(c);
+  if (act === "cut") c.deleted = true;
+  if (act === "undelete") c.deleted = false;
   if (act === "del") cards = cards.filter(x => x !== c);
   save(); render();
 });
@@ -660,10 +745,16 @@ board.addEventListener("dragstart", () => { tip.style.display = "none"; });
 /* new card dialog */
 const dlg = $("#dlg");
 function fillSel(sel, vals, labelFn){ sel.innerHTML = vals.map(v => `<option value="${esc(v)}">${esc(labelFn ? labelFn(v) : v)}</option>`).join(""); }
+function syncLoy(){
+  const neutral = deckById($("#nDeck").value).neutral, isN = $("#nAspect").value === neutral;
+  if (isN) $("#nLoy").value = "Standard";
+  $("#nLoy").disabled = isN;
+}
 function syncDeck(){
   const d = deckById($("#nDeck").value);
   fillSel($("#nType"), d.types);
   fillSel($("#nAspect"), [...d.aspects, d.neutral]);
+  syncLoy();
 }
 function openNew(pre){
   fillSel($("#nDeck"), DECKS.map(d=>d.id), id => deckById(id).title);
@@ -674,16 +765,18 @@ function openNew(pre){
   const d = deckById($("#nDeck").value);
   if (pre.aspect && [...d.aspects, d.neutral].includes(pre.aspect)) $("#nAspect").value = pre.aspect;
   if (pre.loyalty) $("#nLoy").value = pre.loyalty;
+  syncLoy();
   if (pre.rarity && RARITIES.includes(pre.rarity)) $("#nRar").value = pre.rarity;
-  $("#nName").value = "";
+  $("#nName").value = ""; $("#nCost").value = "";
   dlg.showModal(); $("#nName").focus();
 }
 $("#newBtn").onclick = () => { if (!cards.length){ alert("Parse your export first."); return; } openNew(); };
 $("#nDeck").onchange = syncDeck;
+$("#nAspect").onchange = syncLoy;
 $("#nCancel").onclick = () => dlg.close();
 $("#dlgForm").addEventListener("submit", () => {
   const name = $("#nName").value.trim(); if (!name) return;
-  cards.push({uid:++uidCounter,id:"",type:$("#nType").value,name,deck:$("#nDeck").value,orig:null,icons:{},origIcons:null,
+  cards.push({uid:++uidCounter,id:"",type:$("#nType").value,name,deck:$("#nDeck").value,orig:null,icons:{},origIcons:null,info:{subtitle:"",cost:$("#nCost").value.trim(),traits:"",ability:""},
     cur:{aspect:$("#nAspect").value,loyalty:$("#nLoy").value,rarity:$("#nRar").value},isNew:true});
   save(); render();
 });
