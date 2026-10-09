@@ -82,6 +82,8 @@ table.tg input{width:46px;text-align:center;padding:3px}
 .card.isnew .chg,.card .newtag{color:var(--new);font-weight:700}
 .card.jump{outline:2px solid var(--over)}
 .card.jump .chg{color:var(--over);font-weight:700}
+.card.locked{cursor:not-allowed;background:repeating-linear-gradient(135deg,var(--chip),var(--chip) 6px,var(--panel2) 6px,var(--panel2) 12px)}
+.card .lk{font-size:10.5px;color:var(--muted);margin-left:5px}
 .card.dim{opacity:.25}
 .card.hit{box-shadow:0 0 0 3px #ffd43b}
 .card .btn{position:absolute;top:1px;right:2px;display:none;padding:0 5px;line-height:16px;font-size:11px}
@@ -128,7 +130,7 @@ dialog input,dialog select{width:100%}
   </div>
 
   <div id="warnings"></div>
-  <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new, red outline = rarity jump of more than one step. Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets.</div>
+  <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new, red outline = rarity jump of more than one step. Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets. 🔒 striped cards are from older sets than the newest one in the data and cannot be moved; cards with no set listed are movable.</div>
 
   <div id="board"><div class="empty">Paste your export above and press “Parse cards”.</div></div>
 
@@ -171,7 +173,7 @@ dialog input,dialog select{width:100%}
 
 <script>
 "use strict";
-const COLS = ["id","type","name","is_double_sided","subtitle","aspect","loyalty","card-cost","traits","ability","bonus-icons-scripted","health-number","attack","block","inherent-arcane","inherent-diplomacy","inherent-stealth","difficulty","skill-check-type","rarity","leadership","tactics","willpower","deckbuilding-requirement"];
+const COLS = ["id","type","name","is_double_sided","subtitle","aspect","loyalty","card-cost","traits","ability","bonus-icons-scripted","health-number","attack","block","inherent-arcane","inherent-diplomacy","inherent-stealth","difficulty","skill-check-type","rarity","leadership","tactics","willpower","deckbuilding-requirement","first-set-appearance"];
 const RARITIES = ["Common","Uncommon","Rare","Legendary"];
 const RCOLOR = {Common:"var(--common)",Uncommon:"var(--uncommon)",Rare:"var(--rare)",Legendary:"var(--legendary)"};
 const LOYALTIES = ["Standard","Loyal"];
@@ -186,7 +188,7 @@ const DECKS = [
 const DEFAULT_TARGETS = JSON.parse(JSON.stringify(DECKS.map(d=>d.targets)));
 const STORE = "eoo-rarity-balancer-v1";
 
-let cards = [], uidCounter = 0, rawText = "", dragCard = null, skipped = 0;
+let cards = [], maxSet = null, noLoyaltyIgnored = 0, uidCounter = 0, rawText = "", dragCard = null, skipped = 0;
 const openTargets = new Set();
 
 const $ = s => document.querySelector(s);
@@ -199,7 +201,7 @@ const aspLabel = a => a === "" ? "(none)" : a;
 
 /* ---------- parsing ---------- */
 function parseExport(text){
-  const out = []; let map = {}; COLS.forEach((c,i)=>map[c]=i); skipped = 0;
+  const out = []; let map = {}; COLS.forEach((c,i)=>map[c]=i); skipped = 0; maxSet = null; noLoyaltyIgnored = 0;
   for (const rawLine of text.split(/\r?\n/)){
     let l = rawLine.trim();
     if (!l) continue;
@@ -209,11 +211,17 @@ function parseExport(text){
     if (f[0] === "id" && f[1] === "type"){ map = {}; f.forEach((c,i)=>map[c.trim()]=i); continue; }
     const g = k => (f[map[k]] ?? "").trim();
     const type = g("type"), loyalty = g("loyalty");
+    const setM = g("first-set-appearance").match(/\d+/);
+    const setNum = setM ? parseInt(setM[0], 10) : null;
+    if (setNum !== null && (maxSet === null || setNum > maxSet)) maxSet = setNum;
     const deck = DECKS.find(d => d.types.includes(type));
-    if (!deck || (loyalty !== "Standard" && loyalty !== "Loyal")){ skipped++; continue; }
+    if (!deck || (loyalty !== "Standard" && loyalty !== "Loyal")){
+      skipped++; if (deck) noLoyaltyIgnored++; continue;
+    }
     const o = {aspect:g("aspect"), loyalty, rarity:g("rarity")};
-    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o}, isNew:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:g("ability").replace(/\\n/g,"\n").trim()}});
+    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o}, isNew:false, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:g("ability").replace(/\\n/g,"\n").trim()}});
   }
+  out.forEach(c => { c.locked = c.setNum !== null && maxSet !== null && c.setNum < maxSet; });
   return out;
 }
 
@@ -244,7 +252,7 @@ function restore(){
     $("#raw").value = s.raw;
     if (s.targets) s.targets.forEach((t,i)=>{ if (DECKS[i] && t) DECKS[i].targets = t; });
     doParse(true);
-    cards.forEach(c => { const e = s.edits && s.edits[c.id || ("u"+c.uid)]; if (e) c.cur = {...e}; });
+    cards.forEach(c => { const e = s.edits && s.edits[c.id || ("u"+c.uid)]; if (e && !c.locked) c.cur = {...e}; });
     (s.news||[]).forEach(n => cards.push({uid:++uidCounter,id:"",type:n.type,name:n.name,deck:n.deck,orig:null,cur:{...n.cur},isNew:true}));
     render();
   } catch(e){}
@@ -256,7 +264,9 @@ function doParse(silent){
   const st = $("#parseStatus");
   if (!cards.length){ st.textContent = "No balanced cards found. Check the pasted text."; render(); return; }
   const per = DECKS.map(d => `${d.title}: ${cards.filter(c=>c.deck===d.id).length}`).join(" · ");
-  st.textContent = `Parsed ${cards.length} balanced cards (${per}); ${skipped} other cards ignored.`;
+  st.textContent = `Parsed ${cards.length} balanced cards (${per}); ${skipped} other cards ignored`
+    + (noLoyaltyIgnored ? ` (${noLoyaltyIgnored} of them are deck-type cards with no loyalty)` : "")
+    + (maxSet !== null ? `. Newest set found: Set ${maxSet}; ${cards.filter(c=>c.locked).length} older-set cards are locked.` : ". No set data found, nothing locked.");
   if (!silent){ $("#pasteBox").open = false; save(); }
   render();
 }
@@ -291,13 +301,14 @@ function chipHTML(c, q){
   const j = jumpSteps(c);
   if (j > 1) parts.push(`⚠ ${j}-step rarity jump`);
   const cls = ["card"];
+  if (c.locked) cls.push("locked");
   if (c.isNew) cls.push("isnew"); else if (isChanged(c)) cls.push("changed");
   if (hasJump(c)) cls.push("jump");
   if (q){ cls.push(c.name.toLowerCase().includes(q) ? "hit" : "dim"); }
   const btn = c.isNew ? `<button class="btn" data-act="del" title="Remove this new card">✕</button>`
             : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "";
-  return `<div class="${cls.join(" ")}" draggable="true" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
-    <span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>
+  return `<div class="${cls.join(" ")}" draggable="${c.locked ? "false" : "true"}" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
+    <span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the newest set">🔒 ${esc(c.setLabel)}</span>` : ""}
     ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${btn}</div>`;
 }
 
@@ -479,6 +490,7 @@ $("#resetAll").onclick = () => {
 const board = $("#board");
 board.addEventListener("dragstart", e => {
   const el = e.target.closest(".card"); if (!el) return;
+  if (el.classList.contains("locked")){ e.preventDefault(); return; }
   dragCard = cards.find(c => c.uid === +el.dataset.uid);
   e.dataTransfer.setData("text/plain", String(dragCard.uid));
   e.dataTransfer.effectAllowed = "move";
@@ -548,7 +560,7 @@ board.addEventListener("mousemove", e => {
   if (tip.dataset.uid !== el.dataset.uid){
     tip.dataset.uid = el.dataset.uid;
     const i = c.info || {};
-    const meta = [c.type, i.cost !== undefined && i.cost !== "" ? "Cost " + i.cost : "", i.traits].filter(Boolean).join(" · ");
+    const meta = [c.type, i.cost !== undefined && i.cost !== "" ? "Cost " + i.cost : "", i.traits, c.locked ? "🔒 Locked (" + c.setLabel + ")" : c.setLabel].filter(Boolean).join(" · ");
     tip.innerHTML = `<div class="tn">${esc(c.name)}${i.subtitle && i.subtitle !== "-" ? ` <span class="tm">${esc(i.subtitle)}</span>` : ""}</div>
       <div class="tm">${esc(meta)}</div>
       ${i.ability ? `<div class="ta">${esc(i.ability)}</div>` : `<div class="tz">${c.isNew ? "New card: no ability text." : "No ability text."}</div>`}`;
