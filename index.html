@@ -170,7 +170,7 @@ dialog input,dialog select{width:100%}
   <div id="warnings"></div>
   <div id="pairs"></div>
   <div id="icontotals"></div>
-  <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new. With Edit bonus icons on, red = no icons and amber = a single non-Attack icon (schemes excluded). Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets. 🔒 striped cards are from older sets than the newest one in the data and cannot be moved; cards with no set listed are movable.</div>
+  <div class="legend">Count badges: <b style="color:var(--ok)">✓ on target</b> · <b style="color:var(--over)">▲ over</b> · <b style="color:var(--under)">▼ short</b>. Cards: blue outline = changed, purple dashed = new. With Edit bonus icons on, red = no icons and amber = a single non-Attack icon (schemes excluded). Click a card to open its Forge Fire page (sets 1 and 2). Hover a changed card for ↺ (undo) or a new card for ✕ (remove). Neutral buckets have no targets. 🔒 striped cards are from older sets than the newest one in the data and cannot be moved; cards with no set listed are movable.</div>
 
   <div id="board"><div class="empty">Paste your export above and press “Parse cards”.</div></div>
 
@@ -240,6 +240,10 @@ const weakKind = c => {
   return "";
 };
 const iconEmojiStr = ic => iconList(ic).map(emo).join("");
+const FORGE_GAME = "9c9075dc-fa15-43ab-a5cd-2771aeca0811";
+const FORGE_SETS = {1:"b9b4147d-f7f0-4b8f-a74c-a2af26207ce3", 2:"dfa5d772-dd9d-40d6-9ee3-c8dcf95d383e"};
+const forgeUrl = c => (c.id && c.setNum != null && FORGE_SETS[c.setNum])
+  ? `https://app.forgefire.games/app/games/${FORGE_GAME}/sets/${FORGE_SETS[c.setNum]}/cards/${c.id}` : null;
 const DEFAULT_TARGETS = JSON.parse(JSON.stringify(DECKS.map(d=>d.targets)));
 const STORE = "eoo-rarity-balancer-v1";
 
@@ -720,7 +724,14 @@ board.addEventListener("drop", e => {
   dragCard = null; save(); render();
 });
 board.addEventListener("click", e => {
-  const b = e.target.closest("[data-act]"); if (!b) return;
+  const b = e.target.closest("[data-act]");
+  if (!b){
+    if (e.target.closest(".ibrow, button, input")) return;
+    const el = e.target.closest(".card"); if (!el) return;
+    const url = forgeUrl(cards.find(x => x.uid === +el.dataset.uid) || {});
+    if (url) window.open(url, "_blank", "noopener");
+    return;
+  }
   const act = b.dataset.act;
   if (act === "ic+" || act === "ic-"){
     const c = cards.find(x => x.uid === +b.closest(".card").dataset.uid);
@@ -741,12 +752,6 @@ board.addEventListener("click", e => {
   if (act === "undelete") c.deleted = false;
   if (act === "del") cards = cards.filter(x => x !== c);
   save(); render();
-});
-board.addEventListener("dblclick", e => {
-  if (e.target.closest(".ibrow")) return;
-  const el = e.target.closest(".card"); if (!el) return;
-  const c = cards.find(x => x.uid === +el.dataset.uid);
-  if (!c.isNew && isChanged(c)){ resetCard(c); save(); render(); }
 });
 board.addEventListener("change", e => {
   const tg = e.target.dataset.tg; if (!tg) return;
@@ -778,7 +783,7 @@ board.addEventListener("mousemove", e => {
     const meta = [c.type, i.cost !== undefined && i.cost !== "" ? "Cost " + i.cost : "", i.traits, c.locked ? "🔒 Locked (" + c.setLabel + ")" : c.setLabel].filter(Boolean).join(" · ");
     tip.innerHTML = `<div class="tn">${esc(c.name)}${i.subtitle && i.subtitle !== "-" ? ` <span class="tm">${esc(i.subtitle)}</span>` : ""}</div>
       <div class="tm">${esc(meta)}</div>
-      ${iconTotal(c.icons) ? `<div class="tm">Bonus icons: ${esc(iconEmojiStr(c.icons))}</div>` : ""}${i.ability ? `<div class="ta">${esc(i.ability)}</div>` : `<div class="tz">${c.isNew ? "New card: no ability text." : "No ability text."}</div>`}`;
+      ${forgeUrl(c) ? `<div class="tm">Click to open in Forge Fire</div>` : ""}${iconTotal(c.icons) ? `<div class="tm">Bonus icons: ${esc(iconEmojiStr(c.icons))}</div>` : ""}${i.ability ? `<div class="ta">${esc(i.ability)}</div>` : `<div class="tz">${c.isNew ? "New card: no ability text." : "No ability text."}</div>`}`;
   }
   tip.style.display = "block"; placeTip(e);
 });
