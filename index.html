@@ -154,7 +154,7 @@ dialog input,dialog select{width:100%}
     <input type="search" id="search" placeholder="Find card by name…" size="22">
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="showCost"> Show card costs</label>
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="editIcons"> Edit bonus icons</label>
-    <label class="stat" style="cursor:pointer" title="Only allies and lieutenants can be changed; shows 10-cost pair counts"><input type="checkbox" id="pairMode"> Pair mode (allies &amp; lieutenants)</label>
+    <label class="stat" style="cursor:pointer" title="Highlights allies and lieutenants (others are dimmed) and shows 10-cost pair counts"><input type="checkbox" id="pairMode"> Pair mode (allies &amp; lieutenants)</label>
     <span id="copiesWrap" class="stat" style="display:none">copies per card <input type="number" id="pairCopies" value="1" min="1" style="width:46px"></span>
     <button id="saveFile" title="Download your progress as a file">Save progress ⬇</button>
     <button id="loadFile" title="Load a progress file">Load progress ⬆</button><input type="file" id="loadInput" accept=".json,application/json" style="display:none">
@@ -389,7 +389,7 @@ function iconSummary(d, dc, panels, rows){
 }
 const pairMode = () => $("#pairMode").checked;
 const isPairType = c => c.type === "C - Ally" || c.type === "O - Lieutenant";
-const isLocked = c => c.locked || (pairMode() && !isPairType(c));
+const isLocked = c => c.locked;
 const showCost = () => $("#showCost").checked || pairMode();
 function chipHTML(c, q){
   const parts = [];
