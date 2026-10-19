@@ -151,6 +151,11 @@ dialog input,dialog select{width:100%}
 
   <div class="toolbar">
     <button class="primary" id="newBtn">+ Create new card</button>
+    <select id="typeHi" title="Dim every card except this type">
+      <option value="">Highlight type: none</option>
+      <option>C - Ally</option><option>C - Asset</option><option>C - Event</option>
+      <option>O - Asset</option><option>O - Encounter</option><option>O - Event</option><option>O - Lieutenant</option><option>O - Scheme</option>
+    </select>
     <input type="search" id="search" placeholder="Find card by name…" size="22">
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="showCost"> Show card costs</label>
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="editIcons"> Edit bonus icons</label>
@@ -390,6 +395,7 @@ function iconSummary(d, dc, panels, rows){
 const pairMode = () => $("#pairMode").checked;
 const isPairType = c => c.type === "C - Ally" || c.type === "O - Lieutenant";
 const isLocked = c => c.locked;
+const isDimmed = c => { const t = $("#typeHi").value; return t ? c.type !== t : (pairMode() && !isPairType(c)); };
 const showCost = () => $("#showCost").checked || pairMode();
 function chipHTML(c, q){
   const parts = [];
@@ -399,7 +405,7 @@ function chipHTML(c, q){
     : `${k[0].toUpperCase()+k.slice(1)}: ${aspLabel(c.orig[k])} → ${aspLabel(c.cur[k])}`));
   const cls = ["card"];
   if (isLocked(c)) cls.push("locked");
-  if (pairMode() && !isPairType(c)) cls.push("pairoff");
+  if (isDimmed(c)) cls.push("pairoff");
   const wk = editIcons() ? weakKind(c) : "";
   if (wk) cls.push("ico-" + wk);
   if (c.isNew) cls.push("isnew"); else if (isChanged(c)) cls.push("changed");
@@ -671,6 +677,7 @@ $("#search").oninput = render;
 try { $("#pairMode").checked = localStorage.getItem(STORE + "-pair") === "1"; } catch(e){}
 $("#pairMode").onchange = () => { try { localStorage.setItem(STORE + "-pair", $("#pairMode").checked ? "1" : "0"); } catch(e){} render(); };
 $("#pairCopies").onchange = render;
+$("#typeHi").onchange = render;
 $("#saveFile").onclick = () => {
   if (!cards.length){ alert("Nothing to save yet."); return; }
   const a = document.createElement("a");
