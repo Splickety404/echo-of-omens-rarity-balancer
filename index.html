@@ -275,7 +275,7 @@ function parseExport(text){
     if (f[0] === "id" && f[1] === "type"){ map = {}; f.forEach((c,i)=>map[c.trim()]=i); continue; }
     const g = k => (f[map[k]] ?? "").trim();
     const type = g("type");
-    let loyalty = g("loyalty");
+    let loyalty = g("loyalty"); const origLoyalty = loyalty;
     const setM = g("first-set-appearance").match(/\d+/);
     const setNum = setM ? parseInt(setM[0], 10) : null;
     if (setNum !== null && (maxSet === null || setNum > maxSet)) maxSet = setNum;
@@ -284,13 +284,13 @@ function parseExport(text){
     if (!deck || (loyalty !== "Standard" && loyalty !== "Loyal")){
       skipped++; continue;
     }
-    const o = {aspect:g("aspect"), loyalty, rarity:g("rarity")};
+    const o = {aspect:g("aspect"), loyalty:origLoyalty, rarity:g("rarity")};
     const icons = {};
     g("bonus-icons-scripted").split("/").map(x => x.trim()).filter(Boolean).forEach(n => {
       if (!ICONS.includes(n)) ICONS.push(n);
       icons[n] = (icons[n]||0) + 1;
     });
-    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o}, isNew:false, icons, origIcons:{...icons}, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:g("ability").replace(/\\n/g,"\n").trim()}});
+    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o, loyalty}, isNew:false, icons, origIcons:{...icons}, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:g("ability").replace(/\\n/g,"\n").trim()}});
   }
   out.forEach(c => { c.locked = c.setNum !== null && maxSet !== null && c.setNum < maxSet; });
   return out;
@@ -303,7 +303,7 @@ const changedAttrs = c => {
   if (!iconsEqual(c.icons, c.origIcons)) a.push("icons");
   return a;
 };
-const resetCard = c => { c.deleted = false; c.cur = {...c.orig}; c.icons = {...c.origIcons}; };
+const resetCard = c => { c.deleted = false; c.cur = {...c.orig, loyalty:c.orig.loyalty || "Standard"}; c.icons = {...c.origIcons}; };
 const isChanged = c => !!c.deleted || changedAttrs(c).length > 0;
 
 function getState(){
@@ -338,7 +338,7 @@ function doParse(silent){
   if (!cards.length){ st.textContent = "No balanced cards found. Check the pasted text."; render(); return; }
   const per = DECKS.map(d => `${d.title}: ${cards.filter(c=>c.deck===d.id).length}`).join(" · ");
   st.textContent = `Parsed ${cards.length} balanced cards (${per}); ${skipped} other cards ignored`
-    + (noLoyaltyIgnored ? ` (${noLoyaltyIgnored} included cards had no loyalty and are treated as Standard)` : "")
+    + (noLoyaltyIgnored ? ` (${noLoyaltyIgnored} included cards had no loyalty and are set to Standard in the export)` : "")
     + (maxSet !== null ? `. Newest set found: Set ${maxSet}; ${cards.filter(c=>c.locked).length} older-set cards are locked.` : ". No set data found, nothing locked.");
   if (!silent){ $("#pasteBox").open = false; save(); }
   render();
@@ -593,7 +593,7 @@ function buildExport(warns){
       for (const c of chg){
         L.push(`* ${c.name}  [${c.type}]${names[c.name]>1 ? "  (id " + c.id + ")" : ""}`);
         if (c.orig.rarity !== c.cur.rarity) L.push(`    Rarity:  ${rarLabel(c.orig.rarity)} -> ${rarLabel(c.cur.rarity)}`);
-        if (c.orig.loyalty !== c.cur.loyalty) L.push(`    Loyalty: ${c.orig.loyalty} -> ${c.cur.loyalty}`);
+        if (c.orig.loyalty !== c.cur.loyalty) L.push(`    Loyalty: ${c.orig.loyalty || "(blank)"} -> ${c.cur.loyalty}`);
         if (c.orig.aspect !== c.cur.aspect) L.push(`    Aspect:  ${aspLabel(c.orig.aspect)} -> ${aspLabel(c.cur.aspect)}`);
         if (!iconsEqual(c.icons, c.origIcons)) L.push(`    Bonus icons: ${iconList(c.origIcons).join(", ") || "(none)"} -> ${iconList(c.icons).join(", ") || "(none)"}`);
       }
