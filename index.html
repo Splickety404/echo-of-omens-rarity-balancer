@@ -290,7 +290,7 @@ function parseExport(text){
       if (!ICONS.includes(n)) ICONS.push(n);
       icons[n] = (icons[n]||0) + 1;
     });
-    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o, loyalty}, isNew:false, icons, origIcons:{...icons}, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:g("ability").replace(/\\n/g,"\n").trim()}});
+    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o, loyalty}, isNew:false, icons, origIcons:{...icons}, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:(g("ability") || g("ability-overlord")).replace(/\\n/g,"\n").trim()}});
   }
   out.forEach(c => { c.locked = c.setNum !== null && maxSet !== null && c.setNum < maxSet; });
   return out;
