@@ -274,13 +274,15 @@ function parseExport(text){
     const f = l.split("|");
     if (f[0] === "id" && f[1] === "type"){ map = {}; f.forEach((c,i)=>map[c.trim()]=i); continue; }
     const g = k => (f[map[k]] ?? "").trim();
-    const type = g("type"), loyalty = g("loyalty");
+    const type = g("type");
+    let loyalty = g("loyalty");
     const setM = g("first-set-appearance").match(/\d+/);
     const setNum = setM ? parseInt(setM[0], 10) : null;
     if (setNum !== null && (maxSet === null || setNum > maxSet)) maxSet = setNum;
     const deck = DECKS.find(d => d.types.includes(type));
+    if (deck && loyalty === ""){ loyalty = "Standard"; noLoyaltyIgnored++; }  // new cards often have no loyalty yet: treat as Standard
     if (!deck || (loyalty !== "Standard" && loyalty !== "Loyal")){
-      skipped++; if (deck) noLoyaltyIgnored++; continue;
+      skipped++; continue;
     }
     const o = {aspect:g("aspect"), loyalty, rarity:g("rarity")};
     const icons = {};
@@ -336,7 +338,7 @@ function doParse(silent){
   if (!cards.length){ st.textContent = "No balanced cards found. Check the pasted text."; render(); return; }
   const per = DECKS.map(d => `${d.title}: ${cards.filter(c=>c.deck===d.id).length}`).join(" · ");
   st.textContent = `Parsed ${cards.length} balanced cards (${per}); ${skipped} other cards ignored`
-    + (noLoyaltyIgnored ? ` (${noLoyaltyIgnored} of them are deck-type cards with no loyalty)` : "")
+    + (noLoyaltyIgnored ? ` (${noLoyaltyIgnored} included cards had no loyalty and are treated as Standard)` : "")
     + (maxSet !== null ? `. Newest set found: Set ${maxSet}; ${cards.filter(c=>c.locked).length} older-set cards are locked.` : ". No set data found, nothing locked.");
   if (!silent){ $("#pasteBox").open = false; save(); }
   render();
