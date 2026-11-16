@@ -145,6 +145,13 @@ dialog input,dialog select{width:100%}
 .dlgbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .empty{padding:30px;text-align:center;color:var(--muted)}
 .card.fhide{display:none}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;align-items:flex-end;margin-top:10px;border-bottom:1px solid var(--accent)}
+.tab{display:flex;align-items:center;gap:2px;padding:5px 6px 5px 12px;border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0;background:var(--panel2);color:var(--muted);cursor:pointer;font-size:13px}
+.tab:hover{color:var(--text)}
+.tab.on{background:var(--panel);color:var(--text);font-weight:700;border-color:var(--accent);box-shadow:0 1px 0 var(--panel)}
+.tab button{padding:0 5px;font-size:11px;line-height:18px;border:none;background:none;color:var(--muted)}
+.tab button:hover{color:var(--text)}
+.tabadd{margin:0 0 4px 4px;font-size:12.5px}
 .rgrow{display:flex;flex-wrap:wrap;gap:3px;margin:0 0 4px}
 .rg{font-size:10.5px;padding:0 6px;border-radius:99px;border:1px solid var(--line);white-space:nowrap}
 .rg small{color:var(--muted);font-size:10px}
@@ -166,6 +173,7 @@ table.rgtab td{white-space:nowrap}
   <div class="sub">Drag cards between buckets (aspect × loyalty × rarity). Changes are tracked against the original export and listed at the bottom.</div>
 </header>
 <div class="wrap">
+  <nav class="tabs" id="tabs" aria-label="Cardpools"></nav>
   <details class="paste" id="pasteBox" open>
     <summary>1. Paste export string</summary>
     <textarea id="raw" spellcheck="false" placeholder='Paste the whole export here (header line + one "field|field|...", line per card)'></textarea>
@@ -445,11 +453,10 @@ function getState(){
   const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur,icons:c.icons,cost:(c.info && c.info.cost) || ""}));
   return {app:"eoo-rarity-balancer", version:2, savedAt:new Date().toISOString(), raw:rawText, edits, news, targets:DECKS.map(d => d.targets), ranges:typeRanges, rangesVersion:RANGES_VERSION};
 }
-function save(){ try { localStorage.setItem(STORE, JSON.stringify(getState())); } catch(e){} }
 function applyState(s){
   if (!s || !s.raw) throw new Error("not a progress file");
   $("#raw").value = s.raw;
-  if (s.targets) s.targets.forEach((t,i)=>{ if (DECKS[i] && t) DECKS[i].targets = t; });
+  DECKS.forEach((d,i) => { d.targets = clone((s.targets && s.targets[i]) || DEFAULT_TARGETS[i]); });
   typeRanges = (s.ranges && s.rangesVersion === RANGES_VERSION) ? s.ranges : null;  // older saves held export-derived ranges: use Set 1
   doParse(true);
   cards.forEach(c => {
@@ -461,8 +468,56 @@ function applyState(s){
   (s.news||[]).forEach(n => cards.push({uid:++uidCounter,id:"",type:n.type,name:n.name,deck:n.deck,orig:null,cur:{...n.cur},isNew:true,icons:{...(n.icons||{})},origIcons:null,info:{subtitle:"",cost:n.cost||"",traits:"",ability:""}}));
   render();
 }
+/* ---------- cardpool tabs: each tab is a full, independent workspace ---------- */
+const TSTORE = STORE + "-tabs";
+const clone = o => JSON.parse(JSON.stringify(o));
+let tabs = [], activeTab = 0;
+const newTabId = () => "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function persistTabs(){ try { localStorage.setItem(TSTORE, JSON.stringify({active:activeTab, tabs})); } catch(e){} }
+function save(){
+  if (!tabs.length){ tabs = [{id:newTabId(), name:"Cardpool 1", auto:true, state:null}]; activeTab = 0; }
+  const t = tabs[activeTab];
+  t.state = clone(getState());
+  if (t.auto && cards.length && maxSet !== null) t.name = `Set ${maxSet}`;  // unnamed tabs take the newest set's name
+  persistTabs(); renderTabs();
+}
+function loadEmpty(){
+  $("#raw").value = ""; rawText = ""; cards = []; typeRanges = null; maxSet = null;
+  DECKS.forEach((d,i) => { d.targets = clone(DEFAULT_TARGETS[i]); });
+  $("#parseStatus").textContent = ""; $("#pasteBox").open = true;
+  render();
+}
+function loadTab(i){
+  activeTab = i;
+  const s = tabs[i] && tabs[i].state;
+  if (s && s.raw){ try { applyState(clone(s)); $("#pasteBox").open = false; } catch(e){ loadEmpty(); } }
+  else loadEmpty();
+  persistTabs(); renderTabs(); renderFilterUI();
+}
+function switchTab(i){ if (i === activeTab) return; save(); loadTab(i); }
+function renderTabs(){
+  $("#tabs").innerHTML = tabs.map((t, i) => {
+    const on = i === activeTab;
+    return `<div class="tab${on ? " on" : ""}" data-tab="${i}" title="${on ? "Double-click to rename" : "Switch to this cardpool"}"><span>${esc(t.name)}</span>`
+      + (on ? `<button data-tact="ren" title="Rename this cardpool">✎</button><button data-tact="dup" title="Duplicate this cardpool">⧉</button>` : "")
+      + (tabs.length > 1 ? `<button data-tact="close" data-i="${i}" title="Close this cardpool">✕</button>` : "") + `</div>`;
+  }).join("") + `<button class="tabadd" data-tact="new" title="Open a new, empty cardpool">＋ New cardpool</button>`;
+}
+function renameTab(){
+  const t = tabs[activeTab], n = prompt("Name this cardpool:", t.name);
+  if (n === null || !n.trim()) return;
+  t.name = n.trim(); t.auto = false; persistTabs(); renderTabs();
+}
 function restore(){
-  try { applyState(JSON.parse(localStorage.getItem(STORE) || "null")); } catch(e){}
+  let blob = null;
+  try { blob = JSON.parse(localStorage.getItem(TSTORE) || "null"); } catch(e){}
+  if (blob && blob.tabs && blob.tabs.length){ tabs = blob.tabs; activeTab = Math.min(blob.active || 0, tabs.length - 1); }
+  else {  // first run with tabs: bring the single saved workspace over as tab 1
+    let old = null; try { old = JSON.parse(localStorage.getItem(STORE) || "null"); } catch(e){}
+    tabs = [{id:newTabId(), name:"Cardpool 1", auto:true, state:old}]; activeTab = 0;
+  }
+  loadTab(activeTab);
+  if (tabs[activeTab].state) save();  // applies auto-naming to a migrated workspace
 }
 
 function doParse(silent){
@@ -906,7 +961,8 @@ $("#saveFile").onclick = () => {
   if (!cards.length){ alert("Nothing to save yet."); return; }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify(getState(), null, 1)], {type:"application/json"}));
-  a.download = "echo-of-omens-progress-" + new Date().toISOString().slice(0,10) + ".json"; a.click(); URL.revokeObjectURL(a.href);
+  const slug = ((tabs[activeTab] && tabs[activeTab].name) || "cardpool").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  a.download = "echo-of-omens-progress-" + slug + "-" + new Date().toISOString().slice(0,10) + ".json"; a.click(); URL.revokeObjectURL(a.href);
 };
 $("#loadFile").onclick = () => $("#loadInput").click();
 $("#loadInput").onchange = e => {
@@ -1140,6 +1196,31 @@ fbox.addEventListener("change", e => {
 });
 $("#stMatch").onclick = () => { fbox.open = true; fbox.scrollIntoView({behavior:"smooth", block:"nearest"}); };
 if (filt.rules.length) fbox.open = true;
+
+/* cardpool tab bar */
+$("#tabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-tact]");
+  if (b){
+    const a = b.dataset.tact;
+    if (a === "new"){ save(); tabs.push({id:newTabId(), name:`Cardpool ${tabs.length + 1}`, auto:true, state:null}); loadTab(tabs.length - 1); }
+    if (a === "ren") renameTab();
+    if (a === "dup"){
+      save(); const t = tabs[activeTab];
+      tabs.splice(activeTab + 1, 0, {id:newTabId(), name:t.name + " (copy)", auto:false, state:clone(t.state)});
+      loadTab(activeTab + 1);
+    }
+    if (a === "close"){
+      const i = +b.dataset.i, t = tabs[i];
+      if (!confirm(`Close "${t.name}"? Its cards and changes are removed from this browser. Use "Save progress" first if you want to keep a copy.`)) return;
+      if (i === activeTab){ tabs.splice(i, 1); loadTab(Math.min(i, tabs.length - 1)); }
+      else { save(); tabs.splice(i, 1); if (i < activeTab) activeTab--; persistTabs(); renderTabs(); }
+    }
+    return;
+  }
+  const tab = e.target.closest("[data-tab]");
+  if (tab) switchTab(+tab.dataset.tab);
+});
+$("#tabs").addEventListener("dblclick", e => { const tab = e.target.closest("[data-tab]"); if (tab && +tab.dataset.tab === activeTab) renameTab(); });
 
 restore();
 renderFilterUI();
