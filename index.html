@@ -136,6 +136,14 @@ dialog input,dialog select{width:100%}
 .dlgbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .empty{padding:30px;text-align:center;color:var(--muted)}
 .card.fhide{display:none}
+.rgrow{display:flex;flex-wrap:wrap;gap:3px;margin:0 0 4px}
+.rg{font-size:10.5px;padding:0 6px;border-radius:99px;border:1px solid var(--line);white-space:nowrap}
+.rg small{color:var(--muted);font-size:10px}
+.rg.ok{background:var(--okbg);color:var(--ok);border-color:transparent}
+.rg.over{background:var(--overbg);color:var(--over);border-color:var(--over);font-weight:700}
+.rg.under{background:var(--underbg);color:var(--under);border-color:var(--under);font-weight:700}
+table.rgtab input{width:38px}
+table.rgtab td{white-space:nowrap}
 .card .fv{display:block;font-size:10.5px;color:var(--muted);overflow-wrap:anywhere}
 .frow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12.5px}
 .frule{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0}
@@ -162,6 +170,11 @@ dialog input,dialog select{width:100%}
       <option>C - Ally</option><option>C - Asset</option><option>C - Event</option>
       <option>O - Asset</option><option>O - Encounter</option><option>O - Event</option><option>O - Lieutenant</option><option>O - Scheme</option>
     </select>
+    <select id="rangeView" title="Per-card-type min–max counts in each bucket">
+      <option value="off">Type ranges: off</option>
+      <option value="all">Type ranges: show all</option>
+      <option value="bad">Type ranges: only out of range</option>
+    </select>
     <input type="search" id="search" placeholder="Find card by name…" size="22">
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="showCost"> Show card costs</label>
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="editIcons"> Edit bonus icons</label>
@@ -176,6 +189,7 @@ dialog input,dialog select{width:100%}
     <span class="stat" id="stNew">0 new</span>
     <span class="stat" id="stOff">–</span>
     <span class="stat" id="stIcons" style="display:none"></span>
+    <span class="stat" id="stRange" style="display:none"></span>
     <span class="stat" id="stMatch" style="display:none;cursor:pointer" title="Open the field filters"></span>
   </div>
 
@@ -285,6 +299,7 @@ const forgeUrl = c => (c.id && c.setNum != null && FORGE_SETS[c.setNum])
 const DEFAULT_TARGETS = JSON.parse(JSON.stringify(DECKS.map(d=>d.targets)));
 const STORE = "eoo-rarity-balancer-v1";
 
+let typeRanges = null;
 let cards = [], maxSet = null, noLoyaltyIgnored = 0, uidCounter = 0, rawText = "", dragCard = null, skipped = 0;
 const openTargets = new Set();
 
@@ -418,13 +433,14 @@ function getState(){
   const edits = {};
   cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = {...c.cur, icons:c.icons, deleted:!!c.deleted}; });
   const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur,icons:c.icons,cost:(c.info && c.info.cost) || ""}));
-  return {app:"eoo-rarity-balancer", version:2, savedAt:new Date().toISOString(), raw:rawText, edits, news, targets:DECKS.map(d => d.targets)};
+  return {app:"eoo-rarity-balancer", version:2, savedAt:new Date().toISOString(), raw:rawText, edits, news, targets:DECKS.map(d => d.targets), ranges:typeRanges};
 }
 function save(){ try { localStorage.setItem(STORE, JSON.stringify(getState())); } catch(e){} }
 function applyState(s){
   if (!s || !s.raw) throw new Error("not a progress file");
   $("#raw").value = s.raw;
   if (s.targets) s.targets.forEach((t,i)=>{ if (DECKS[i] && t) DECKS[i].targets = t; });
+  typeRanges = s.ranges || null;
   doParse(true);
   cards.forEach(c => {
     const e = s.edits && s.edits[c.id || ("u"+c.uid)];
@@ -444,6 +460,7 @@ function doParse(silent){
   cards = parseExport(rawText);
   const st = $("#parseStatus");
   if (!cards.length){ st.textContent = "No balanced cards found. Check the pasted text."; render(); return; }
+  if (!typeRanges) typeRanges = computeRanges();  // first parse only: later exports keep the ranges you tuned
   const per = DECKS.map(d => `${d.title}: ${cards.filter(c=>c.deck===d.id).length}`).join(" · ");
   st.textContent = `Parsed ${cards.length} balanced cards (${per}); ${skipped} other cards ignored`
     + (noLoyaltyIgnored ? ` (${noLoyaltyIgnored} included cards had no loyalty and are set to Standard in the export)` : "")
@@ -468,6 +485,65 @@ function groupCards(){
   }
   return m;
 }
+/* ---------- per-type ranges (min/max of each card type per aspect bucket) ---------- */
+// typeRanges[deckId][type][loyalty][rarityIndex] = [min, max]. Types are full strings ("C - Event" vs "O - Event"), so sides stay separate.
+function computeRanges(){
+  const R = {};
+  for (const d of DECKS){
+    R[d.id] = {};
+    for (const t of d.types){
+      R[d.id][t] = {};
+      for (const l of LOYALTIES){
+        R[d.id][t][l] = RARITIES.map(r => {
+          const ns = d.aspects.map(a => cards.filter(c => !c.isNew && c.deck === d.id && c.type === t && c.orig.aspect === a
+            && (c.orig.loyalty || "Standard") === l && c.orig.rarity === r).length);
+          return [Math.min(...ns), Math.max(...ns)];
+        });
+      }
+    }
+  }
+  return R;
+}
+const rangeFor = (did, t, l, i) => (typeRanges && typeRanges[did] && typeRanges[did][t] && typeRanges[did][t][l] && typeRanges[did][t][l][i]) || null;
+const rangeView = () => $("#rangeView").value;
+// Range status of every card type in one bucket (deleted cards excluded).
+function rangeChecks(d, a, l, r, list){
+  const i = rIdx(r);
+  if (!typeRanges || i < 0 || !d.aspects.includes(a)) return [];
+  return d.types.map(t => {
+    const rg = rangeFor(d.id, t, l, i); if (!rg) return null;
+    const n = list.filter(c => c.type === t && !c.deleted).length;
+    return {t, n, rg, st:n < rg[0] ? "under" : n > rg[1] ? "over" : "ok"};
+  }).filter(Boolean);
+}
+function rangeViolations(){
+  const out = [], groups = groupCards();
+  for (const d of DECKS) for (const a of d.aspects) for (const l of LOYALTIES) for (const r of RARITIES)
+    rangeChecks(d, a, l, r, groups.get([d.id,a,l,r].join("|")) || []).filter(x => x.st !== "ok")
+      .forEach(x => out.push({d, a, l, r, ...x}));
+  return out;
+}
+const rgTxt = rg => rg[0] === rg[1] ? String(rg[0]) : `${rg[0]}–${rg[1]}`;
+function rangeRow(d, a, l, r, list){
+  const v = rangeView(); if (v === "off") return "";
+  const items = rangeChecks(d, a, l, r, list);
+  const show = v === "all" ? items.filter(x => x.n || x.rg[1]) : items.filter(x => x.st !== "ok");
+  if (!show.length) return "";
+  return `<div class="rgrow">${show.map(x => `<span class="rg ${x.st}" title="${esc(x.t)}: ${x.n} card${x.n === 1 ? "" : "s"}, range ${rgTxt(x.rg)}">${esc(shortType(x.t))} <b>${x.n}</b> <small>(${rgTxt(x.rg)})</small>${x.st === "over" ? " ▲" : x.st === "under" ? " ▼" : ""}</span>`).join("")}</div>`;
+}
+function rangeEditor(d){
+  if (!typeRanges) return "";
+  const key = "rg-" + d.id;
+  const rows = d.types.flatMap(t => LOYALTIES.map(l => `<tr><th style="text-align:left">${esc(shortType(t))} · ${l}</th>${RARITIES.map((r, i) => {
+    const rg = rangeFor(d.id, t, l, i) || [0, 0], bad = rg[0] > rg[1] ? ' style="outline:1.5px solid var(--over)"' : "";
+    return `<td${bad}><input type="number" min="0" value="${rg[0]}" data-rg="${esc(d.id + "|" + t + "|" + l + "|" + i + "|0")}" title="Min">–<input type="number" min="0" value="${rg[1]}" data-rg="${esc(d.id + "|" + t + "|" + l + "|" + i + "|1")}" title="Max"></td>`;
+  }).join("")}</tr>`)).join("");
+  return `<details class="targets" data-open="${key}" ${openTargets.has(key) ? "open" : ""}><summary>Edit card-type ranges per aspect (min–max)</summary>
+    <div class="sub">How many cards of each type each aspect's bucket may hold. Starting values are the fewest and most found across ${d.aspects.join(", ")} in the export. Ranges stay saved when you paste a new export.</div>
+    <table class="tg rgtab"><tr><th></th>${RARITIES.map(r => `<th>${r}</th>`).join("")}</tr>${rows}</table>
+    <button data-act="rgreset" data-deck="${d.id}" style="margin-top:6px">Recalculate this deck's ranges from the export</button></details>`;
+}
+
 function cntBadge(n, t){
   if (t === null) return `<span class="cnt none">${n}</span>`;
   if (n === t) return `<span class="cnt ok">${n} / ${t} ✓</span>`;
@@ -575,7 +651,7 @@ function render(){
           cells += `<div class="cell" data-deck="${d.id}" data-aspect="${esc(a)}" data-loyalty="${l}" data-rarity="${esc(r)}">
             <div class="chead"><span class="rar" style="--c:${RCOLOR[r]||"var(--muted)"}">${esc(rarLabel(r))}</span>
               <span style="display:flex;align-items:center">${cntBadge(list.length,t)}<button class="cnt plus" data-act="add" title="Create new card in this bucket" style="background:none">＋</button></span></div>
-            ${editIcons() ? cellIcons(list) : ""}${list.map(c=>chipHTML(c,q)).join("")}</div>`;
+            ${rangeRow(d, a, l, r, list)}${editIcons() ? cellIcons(list) : ""}${list.map(c=>chipHTML(c,q)).join("")}</div>`;
         }
       }
       ph += `<div class="panel"><div class="phead"><span>${esc(aspLabel(a))}${isTarget?"":" <small style='font-weight:400;color:var(--muted)'>(neutral – no targets)</small>"}</span>${tot}</div><div class="grid" style="grid-template-columns:repeat(${cols.length},1fr)">${cells}</div></div>`;
@@ -587,6 +663,7 @@ function render(){
         <span class="meta">${dc.length} cards · ${chg} changed · ${nw} new · ${delList.length} deleted · target per aspect: ${perAspTarget}</span></div>
       <details class="targets" data-open="${d.id}" ${openTargets.has(d.id)?"open":""}><summary>Edit targets per aspect</summary>
         <table class="tg"><tr><th></th>${RARITIES.map(r=>`<th>${r}</th>`).join("")}<th>Total</th></tr>${tgRows}</table></details>
+      ${rangeEditor(d)}
       ${editIcons() ? iconSummary(d, dc, panels, rows) : ""}
       <div class="panels">${ph}</div>
       ${delList.length ? `<details class="delbox" open><summary>Deleted cards (${delList.length}): rarity becomes Blank</summary><div style="margin-top:6px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px">${delList.map(c => `<div class="card deleted" draggable="false" data-uid="${c.uid}" style="--c:var(--muted)"><span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span><span class="chg" style="text-decoration:none">Rarity: ${esc(rarLabel(c.orig.rarity))} → Blank</span><button class="btn show" data-act="undelete" title="Restore card">↩</button></div>`).join("")}</div></details>` : ""}
@@ -595,6 +672,12 @@ function render(){
   board.innerHTML = html;
   renderPairs();
   renderIconTotals();
+  const sr = $("#stRange");
+  if (rangeView() !== "off" && typeRanges){
+    const nv = rangeViolations().length;
+    sr.style.display = ""; sr.className = "stat " + (nv ? "bad" : "good");
+    sr.textContent = nv ? `${nv} type count${nv === 1 ? "" : "s"} out of range` : "All type counts in range";
+  } else sr.style.display = "none";
   const sm = $("#stMatch"), nRules = activeRules().length;
   if (nRules){
     const nm = cards.filter(c => !c.deleted && filterMatch(c)).length;
@@ -741,6 +824,12 @@ function buildExport(warns){
     if (n !== t){ any = true; L.push(`${d.title} / ${a} / ${l} / ${r}: ${n} (target ${t}, ${n>t?"over by "+(n-t):"short by "+(t-n)})`); }
   });
   if (!any) L.push("None. Every bucket is on target.");
+  if (typeRanges){
+    L.push(""); L.push("=".repeat(60)); L.push("CARD TYPES OUTSIDE THEIR RANGE (for reference)"); L.push("=".repeat(60));
+    const vs = rangeViolations();
+    vs.forEach(v => L.push(`${v.d.title} / ${v.a} / ${v.l} / ${v.r} / ${v.t}: ${v.n} (range ${rgTxt(v.rg)}, ${v.st === "over" ? "over by " + (v.n - v.rg[1]) : "short by " + (v.rg[0] - v.n)})`));
+    if (!vs.length) L.push("None. Every card type is within range.");
+  }
   if (warns.length){ L.push(""); L.push("WARNINGS:"); warns.forEach(w => L.push("- " + w)); }
   return L.join("\n");
 }
@@ -800,6 +889,8 @@ try { $("#pairMode").checked = localStorage.getItem(STORE + "-pair") === "1"; } 
 $("#pairMode").onchange = () => { try { localStorage.setItem(STORE + "-pair", $("#pairMode").checked ? "1" : "0"); } catch(e){} render(); };
 $("#pairCopies").onchange = render;
 $("#typeHi").onchange = render;
+try { $("#rangeView").value = localStorage.getItem(STORE + "-ranges") || "off"; } catch(e){}
+$("#rangeView").onchange = () => { try { localStorage.setItem(STORE + "-ranges", $("#rangeView").value); } catch(e){} render(); };
 $("#saveFile").onclick = () => {
   if (!cards.length){ alert("Nothing to save yet."); return; }
   const a = document.createElement("a");
@@ -870,6 +961,11 @@ board.addEventListener("click", e => {
     if (v === 0) delete c.icons[n]; else c.icons[n] = v;
     save(); render(); return;
   }
+  if (act === "rgreset"){
+    const d = deckById(b.dataset.deck);
+    if (!confirm(`Replace ${d.title} type ranges with the fewest/most found in the current export?`)) return;
+    typeRanges[d.id] = computeRanges()[d.id]; save(); render(); return;
+  }
   if (act === "add"){
     const cell = b.closest(".cell");
     openNew({deck:cell.dataset.deck, aspect:cell.dataset.aspect, loyalty:cell.dataset.loyalty, rarity:cell.dataset.rarity});
@@ -883,6 +979,12 @@ board.addEventListener("click", e => {
   save(); render();
 });
 board.addEventListener("change", e => {
+  const rg = e.target.dataset.rg;
+  if (rg){
+    const [did, t, l, i, k] = rg.split("|");
+    rangeFor(did, t, l, +i)[+k] = Math.max(0, parseInt(e.target.value, 10) || 0);
+    save(); render(); return;
+  }
   const tg = e.target.dataset.tg; if (!tg) return;
   const [did, loy, i] = tg.split("|");
   deckById(did).targets[loy][+i] = Math.max(0, parseInt(e.target.value, 10) || 0);
