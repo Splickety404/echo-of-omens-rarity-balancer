@@ -309,7 +309,7 @@ const forgeUrl = c => (c.id && c.setNum != null && FORGE_SETS[c.setNum])
 const DEFAULT_TARGETS = JSON.parse(JSON.stringify(DECKS.map(d=>d.targets)));
 const STORE = "eoo-rarity-balancer-v1";
 
-let typeRanges = null;
+let typeRanges = null;  // filled from SET1_RANGES (or a saved copy) on parse
 let cards = [], maxSet = null, noLoyaltyIgnored = 0, uidCounter = 0, rawText = "", dragCard = null, skipped = 0;
 const openTargets = new Set();
 
@@ -443,14 +443,14 @@ function getState(){
   const edits = {};
   cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = {...c.cur, icons:c.icons, deleted:!!c.deleted}; });
   const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur,icons:c.icons,cost:(c.info && c.info.cost) || ""}));
-  return {app:"eoo-rarity-balancer", version:2, savedAt:new Date().toISOString(), raw:rawText, edits, news, targets:DECKS.map(d => d.targets), ranges:typeRanges};
+  return {app:"eoo-rarity-balancer", version:2, savedAt:new Date().toISOString(), raw:rawText, edits, news, targets:DECKS.map(d => d.targets), ranges:typeRanges, rangesVersion:RANGES_VERSION};
 }
 function save(){ try { localStorage.setItem(STORE, JSON.stringify(getState())); } catch(e){} }
 function applyState(s){
   if (!s || !s.raw) throw new Error("not a progress file");
   $("#raw").value = s.raw;
   if (s.targets) s.targets.forEach((t,i)=>{ if (DECKS[i] && t) DECKS[i].targets = t; });
-  typeRanges = s.ranges || null;
+  typeRanges = (s.ranges && s.rangesVersion === RANGES_VERSION) ? s.ranges : null;  // older saves held export-derived ranges: use Set 1
   doParse(true);
   cards.forEach(c => {
     const e = s.edits && s.edits[c.id || ("u"+c.uid)];
@@ -470,7 +470,7 @@ function doParse(silent){
   cards = parseExport(rawText);
   const st = $("#parseStatus");
   if (!cards.length){ st.textContent = "No balanced cards found. Check the pasted text."; render(); return; }
-  if (!typeRanges) typeRanges = computeRanges();  // first parse only: later exports keep the ranges you tuned
+  if (!typeRanges) typeRanges = baseRanges();  // tuned ranges survive new exports
   const per = DECKS.map(d => `${d.title}: ${cards.filter(c=>c.deck===d.id).length}`).join(" · ");
   st.textContent = `Parsed ${cards.length} balanced cards (${per}); ${skipped} other cards ignored`
     + (noLoyaltyIgnored ? ` (${noLoyaltyIgnored} included cards had no loyalty and are set to Standard in the export)` : "")
@@ -497,23 +497,10 @@ function groupCards(){
 }
 /* ---------- per-type ranges (min/max of each card type per aspect bucket) ---------- */
 // typeRanges[deckId][type][loyalty][rarityIndex] = [min, max]. Types are full strings ("C - Event" vs "O - Event"), so sides stay separate.
-function computeRanges(){
-  const R = {};
-  for (const d of DECKS){
-    R[d.id] = {};
-    for (const t of d.types){
-      R[d.id][t] = {};
-      for (const l of LOYALTIES){
-        R[d.id][t][l] = RARITIES.map(r => {
-          const ns = d.aspects.map(a => cards.filter(c => !c.isNew && c.deck === d.id && c.type === t && c.orig.aspect === a
-            && (c.orig.loyalty || "Standard") === l && c.orig.rarity === r).length);
-          return [Math.min(...ns), Math.max(...ns)];
-        });
-      }
-    }
-  }
-  return R;
-}
+// Baseline ranges: fewest/most cards of each type per aspect bucket in the Set 1 export (Nov 2026).
+const SET1_RANGES = {"champ":{"C - Ally":{"Standard":[[3,4],[2,2],[0,1],[1,1]],"Loyal":[[1,2],[1,2],[0,0],[0,0]]},"C - Asset":{"Standard":[[3,5],[1,3],[2,3],[0,1]],"Loyal":[[0,1],[0,1],[0,2],[0,1]]},"C - Event":{"Standard":[[0,3],[1,3],[0,1],[0,1]],"Loyal":[[1,2],[1,1],[0,2],[0,1]]}},"main":{"O - Asset":{"Standard":[[1,1],[0,1],[1,2],[0,0]],"Loyal":[[0,1],[0,1],[0,1],[0,1]]},"O - Encounter":{"Standard":[[5,7],[3,5],[0,2],[1,1]],"Loyal":[[3,4],[0,1],[0,1],[0,0]]},"O - Event":{"Standard":[[0,3],[1,2],[1,2],[0,1]],"Loyal":[[0,0],[0,1],[0,1],[0,1]]},"O - Lieutenant":{"Standard":[[1,1],[1,1],[2,3],[1,1]],"Loyal":[[0,1],[1,2],[1,1],[0,0]]}},"scheme":{"O - Scheme":{"Standard":[[3,3],[1,1],[1,1],[0,0]],"Loyal":[[0,0],[1,1],[1,1],[0,0]]}}};
+const RANGES_VERSION = "set1";
+const baseRanges = () => JSON.parse(JSON.stringify(SET1_RANGES));
 const rangeFor = (did, t, l, i) => (typeRanges && typeRanges[did] && typeRanges[did][t] && typeRanges[did][t][l] && typeRanges[did][t][l][i]) || null;
 const rangeView = () => $("#rangeView").value;
 // Range status of every card type in one bucket (deleted cards excluded).
@@ -549,9 +536,9 @@ function rangeEditor(d){
     return `<td${bad}><input type="number" min="0" value="${rg[0]}" data-rg="${esc(d.id + "|" + t + "|" + l + "|" + i + "|0")}" title="Min">–<input type="number" min="0" value="${rg[1]}" data-rg="${esc(d.id + "|" + t + "|" + l + "|" + i + "|1")}" title="Max"></td>`;
   }).join("")}</tr>`)).join("");
   return `<details class="targets" data-open="${key}" ${openTargets.has(key) ? "open" : ""}><summary>Edit card-type ranges per aspect (min–max)</summary>
-    <div class="sub">How many cards of each type each aspect's bucket may hold. Starting values are the fewest and most found across ${d.aspects.join(", ")} in the export. Ranges stay saved when you paste a new export.</div>
+    <div class="sub">How many cards of each type each aspect's bucket may hold. Starting values are the fewest and most found across ${d.aspects.join(", ")} in the Set 1 data. Your edits are saved and kept when you paste a new export.</div>
     <table class="tg rgtab"><tr><th></th>${RARITIES.map(r => `<th>${r}</th>`).join("")}</tr>${rows}</table>
-    <button data-act="rgreset" data-deck="${d.id}" style="margin-top:6px">Recalculate this deck's ranges from the export</button></details>`;
+    <button data-act="rgreset" data-deck="${d.id}" style="margin-top:6px">Reset this deck's ranges to Set 1</button></details>`;
 }
 
 function cntBadge(n, t){
@@ -987,8 +974,8 @@ board.addEventListener("click", e => {
   }
   if (act === "rgreset"){
     const d = deckById(b.dataset.deck);
-    if (!confirm(`Replace ${d.title} type ranges with the fewest/most found in the current export?`)) return;
-    typeRanges[d.id] = computeRanges()[d.id]; save(); render(); return;
+    if (!confirm(`Reset ${d.title} type ranges to the Set 1 baseline? Your edits to this deck's ranges will be lost.`)) return;
+    typeRanges[d.id] = baseRanges()[d.id]; save(); render(); return;
   }
   if (act === "add"){
     const cell = b.closest(".cell");
