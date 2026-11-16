@@ -135,6 +135,12 @@ dialog label{display:block;margin:8px 0 2px;font-size:12px;color:var(--muted)}
 dialog input,dialog select{width:100%}
 .dlgbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .empty{padding:30px;text-align:center;color:var(--muted)}
+.card.fhide{display:none}
+.card .fv{display:block;font-size:10.5px;color:var(--muted);overflow-wrap:anywhere}
+.frow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12.5px}
+.frule{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0}
+.vchip{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--chip)}
+.vchip b{color:var(--muted);font-weight:600;margin-left:3px}
 </style>
 </head>
 <body>
@@ -170,7 +176,34 @@ dialog input,dialog select{width:100%}
     <span class="stat" id="stNew">0 new</span>
     <span class="stat" id="stOff">–</span>
     <span class="stat" id="stIcons" style="display:none"></span>
+    <span class="stat" id="stMatch" style="display:none;cursor:pointer" title="Open the field filters"></span>
   </div>
+
+  <details class="paste" id="filterBox">
+    <summary>Highlight &amp; filter by field<span id="fCount" style="font-weight:400;color:var(--muted)"></span></summary>
+    <div class="frow" style="margin-top:8px">
+      <span class="sub" style="margin:0">Presets:</span>
+      <button data-fact="preset" data-p="comm">🎨 Commissioned art</button>
+      <button data-fact="preset" data-p="noart">No line artist</button>
+      <button data-fact="preset" data-p="nocomm">Has an artist, not commissioned</button>
+      <button data-fact="preset" data-p="noicons">No bonus icons</button>
+      <button data-fact="preset" data-p="norar">No rarity</button>
+    </div>
+    <div id="fRules" style="margin:8px 0"></div>
+    <div class="frow">
+      <button data-fact="add">+ Add rule</button>
+      <label>Cards must match <select id="fLogic"><option value="all">all rules</option><option value="any">any rule</option></select></label>
+      <label>Non-matching cards: <select id="fMode"><option value="highlight">dim them</option><option value="hide">hide them</option></select></label>
+      <label>Show field on cards: <select id="fShow"></select></label>
+      <button data-fact="clear">Clear rules</button>
+    </div>
+    <div class="frow" style="margin-top:10px">
+      <label>Value breakdown for <select id="fBd"></select></label>
+      <span class="sub" style="margin:0">Click a value to highlight those cards.</span>
+    </div>
+    <div id="fBdVals" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"></div>
+    <div class="sub" style="margin-top:8px">Matching is case-insensitive. Aspect, loyalty, rarity and bonus icons use your edited values. Hidden cards still count toward bucket totals.</div>
+  </details>
 
   <div id="warnings"></div>
   <div id="pairs"></div>
@@ -263,6 +296,79 @@ const shortType = t => (t.split(" - ")[1] || t);
 const rarLabel = r => r === "" ? "(none)" : r;
 const aspLabel = a => a === "" ? "(none)" : a;
 
+/* ---------- field highlight / filter ---------- */
+let fieldNames = COLS.filter(k => k !== "id");
+const FSTORE = STORE + "-filters";
+// Fields the balancer can edit read their current (edited) value; everything else comes straight from the export.
+const LIVE_FIELDS = {name:c => c.name, type:c => c.type, aspect:c => c.cur.aspect, loyalty:c => c.cur.loyalty, rarity:c => c.cur.rarity,
+  "bonus-icons-scripted":c => iconList(c.icons).join(" / "), "card-cost":c => (c.info && c.info.cost) || ""};
+const fieldVal = (c, k) => String((LIVE_FIELDS[k] ? LIVE_FIELDS[k](c) : (c.fields && c.fields[k])) ?? "").trim();
+const OPS = {contains:"contains", ncontains:"doesn't contain", eq:"is exactly", neq:"is not", empty:"is blank", nempty:"is not blank", gt:">", gte:"≥", lt:"<", lte:"≤"};
+const NUM_OPS = ["gt","gte","lt","lte"], NOVAL = ["empty","nempty"];
+let filt = {rules:[], mode:"highlight", logic:"all", show:"", bd:"line-artist"};
+try { Object.assign(filt, JSON.parse(localStorage.getItem(FSTORE) || "{}")); } catch(e){}
+const saveFilt = () => { try { localStorage.setItem(FSTORE, JSON.stringify(filt)); } catch(e){} };
+const filterFields = () => [...new Set(["name","type", ...fieldNames])];
+function isNumField(k){
+  let any = false;
+  for (const c of cards){ const v = fieldVal(c, k); if (v === "") continue; if (isNaN(+v)) return false; any = true; }
+  return any;
+}
+const isListField = k => cards.some(c => fieldVal(c, k).includes(" / "));
+function ruleTest(r, c){
+  const v = fieldVal(c, r.field), lv = v.toLowerCase(), q = (r.value || "").trim().toLowerCase();
+  switch (r.op){
+    case "contains": return lv.includes(q);
+    case "ncontains": return !lv.includes(q);
+    case "eq": return lv === q;
+    case "neq": return lv !== q;
+    case "empty": return v === "";
+    case "nempty": return v !== "";
+  }
+  const a = parseFloat(v), b = parseFloat(q);
+  if (isNaN(a) || isNaN(b)) return false;
+  return r.op === "gt" ? a > b : r.op === "gte" ? a >= b : r.op === "lt" ? a < b : a <= b;
+}
+const activeRules = () => filt.rules.filter(r => r.field && (NOVAL.includes(r.op) || (r.value || "").trim() !== ""));
+function filterMatch(c){
+  const rs = activeRules(); if (!rs.length) return null;
+  return filt.logic === "any" ? rs.some(r => ruleTest(r, c)) : rs.every(r => ruleTest(r, c));
+}
+function fieldValues(k){
+  const m = new Map(), list = isListField(k);
+  cards.filter(c => !c.deleted).forEach(c => {
+    const v = fieldVal(c, k);
+    (list && v ? v.split(" / ").map(x => x.trim()) : [v]).forEach(x => m.set(x, (m.get(x) || 0) + 1));
+  });
+  return {list, vals:[...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))};
+}
+function renderFilterUI(){
+  const fl = filterFields(), opt = (vals, sel, lab) => vals.map(v => `<option value="${esc(v)}"${v === sel ? " selected" : ""}>${esc(lab ? lab(v) : v)}</option>`).join("");
+  $("#fRules").innerHTML = filt.rules.map((r, i) => {
+    const num = isNumField(r.field), ops = Object.keys(OPS).filter(o => num || !NUM_OPS.includes(o));
+    const sugg = fieldValues(r.field).vals.slice(0, 200).map(([v]) => v ? `<option value="${esc(v)}">` : "").join("");
+    return `<div class="frule">
+      <select data-i="${i}" data-k="field">${opt(fl, r.field)}</select>
+      <select data-i="${i}" data-k="op">${opt(ops, r.op, o => OPS[o])}</select>
+      <input type="search" data-i="${i}" data-k="value" value="${esc(r.value || "")}" list="fdl${i}" placeholder="value…" size="20"${NOVAL.includes(r.op) ? " disabled" : ""}><datalist id="fdl${i}">${sugg}</datalist>
+      <button data-fact="rm" data-i="${i}" title="Remove rule">✕</button></div>`;
+  }).join("") || `<div class="sub">No rules. Add one, use a preset, or click a value in the breakdown below.</div>`;
+  $("#fMode").value = filt.mode; $("#fLogic").value = filt.logic;
+  $("#fShow").innerHTML = `<option value="">none</option>` + opt(fl, filt.show);
+  if (!fl.includes(filt.bd)) filt.bd = fl.includes("line-artist") ? "line-artist" : "traits";
+  $("#fBd").innerHTML = opt(fl, filt.bd);
+  renderBreakdown();
+}
+function renderBreakdown(){
+  const k = filt.bd, el = $("#fBdVals");
+  if (!cards.length){ el.innerHTML = `<span class="sub">Parse cards to see values.</span>`; return; }
+  const {list, vals} = fieldValues(k);
+  const MAX = 80;
+  el.innerHTML = vals.slice(0, MAX).map(([v, n]) => `<button class="vchip" data-fact="pick" data-v="${esc(v)}" data-list="${list ? 1 : 0}" title="${list ? "Highlight cards whose " + esc(k) + " includes this" : "Highlight cards with this " + esc(k)}">${v === "" ? "<i>(blank)</i>" : esc(v.length > 40 ? v.slice(0, 40) + "…" : v)} <b>${n}</b></button>`).join("")
+    + (vals.length > MAX ? `<span class="sub"> …and ${vals.length - MAX} more values</span>` : "");
+}
+function filtChanged(rebuild){ saveFilt(); if (rebuild) renderFilterUI(); render(); }
+
 /* ---------- parsing ---------- */
 function parseExport(text){
   const out = []; let map = {}; COLS.forEach((c,i)=>map[c]=i); skipped = 0; maxSet = null; noLoyaltyIgnored = 0;
@@ -290,9 +396,11 @@ function parseExport(text){
       if (!ICONS.includes(n)) ICONS.push(n);
       icons[n] = (icons[n]||0) + 1;
     });
-    out.push({uid:++uidCounter, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o, loyalty}, isNew:false, icons, origIcons:{...icons}, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:(g("ability") || g("ability-overlord")).replace(/\\n/g,"\n").trim()}});
+    const fields = {}; Object.keys(map).forEach(k => { fields[k] = g(k).replace(/\\n/g, "\n"); });
+    out.push({uid:++uidCounter, fields, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o, loyalty}, isNew:false, icons, origIcons:{...icons}, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:(g("ability") || g("ability-overlord")).replace(/\\n/g,"\n").trim()}});
   }
   out.forEach(c => { c.locked = c.setNum !== null && maxSet !== null && c.setNum < maxSet; });
+  fieldNames = Object.keys(map).map(k => k.trim()).filter(k => k && k !== "id");
   return out;
 }
 
@@ -341,6 +449,7 @@ function doParse(silent){
     + (noLoyaltyIgnored ? ` (${noLoyaltyIgnored} included cards had no loyalty and are set to Standard in the export)` : "")
     + (maxSet !== null ? `. Newest set found: Set ${maxSet}; ${cards.filter(c=>c.locked).length} older-set cards are locked.` : ". No set data found, nothing locked.");
   if (!silent){ $("#pasteBox").open = false; save(); }
+  renderFilterUI();
   render();
 }
 
@@ -411,13 +520,18 @@ function chipHTML(c, q){
   const wk = editIcons() ? weakKind(c) : "";
   if (wk) cls.push("ico-" + wk);
   if (c.isNew) cls.push("isnew"); else if (isChanged(c)) cls.push("changed");
-  if (q){ cls.push(c.name.toLowerCase().includes(q) ? "hit" : "dim"); }
+  const fm = filterMatch(c), qm = q ? c.name.toLowerCase().includes(q) : null;
+  if (fm !== null || qm !== null){
+    if (fm !== false && qm !== false) cls.push("hit");
+    else cls.push(fm === false && filt.mode === "hide" ? "fhide" : "dim");
+  }
+  const fv = filt.show ? fieldVal(c, filt.show) : "";
   const btn = (c.isNew ? `<button class="btn" data-act="del" title="Remove this new card">✕</button>`
             : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "")
     + (!c.isNew && !isLocked(c) ? `<button class="btn btn2" data-act="cut" title="Delete card (rarity becomes Blank)">🗑</button>` : "");
   return `<div class="${cls.join(" ")}" draggable="${isLocked(c) ? "false" : "true"}" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
     ${showCost() && c.info && c.info.cost !== "" ? `<span class="cost" title="Card cost">${esc(c.info.cost)}</span>` : ""}<span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the newest set">🔒 ${esc(c.setLabel)}</span>` : ""}
-    ${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${wk ? `<span class="wk wk-${wk}">⚠ ${wk === "none" ? "no bonus icons" : "only 1 icon"}</span>` : ""}${editIcons() ? iconRow(c) : ""}${btn}</div>`;
+    ${filt.show ? `<span class="fv">${esc(filt.show)}: ${fv ? esc(fv.length > 60 ? fv.slice(0, 60) + "…" : fv) : "<i>blank</i>"}</span>` : ""}${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${wk ? `<span class="wk wk-${wk}">⚠ ${wk === "none" ? "no bonus icons" : "only 1 icon"}</span>` : ""}${editIcons() ? iconRow(c) : ""}${btn}</div>`;
 }
 
 function render(){
@@ -481,6 +595,12 @@ function render(){
   board.innerHTML = html;
   renderPairs();
   renderIconTotals();
+  const sm = $("#stMatch"), nRules = activeRules().length;
+  if (nRules){
+    const nm = cards.filter(c => !c.deleted && filterMatch(c)).length;
+    sm.style.display = ""; sm.textContent = `${nm} match${nm === 1 ? "" : "es"} (${filt.mode === "hide" ? "others hidden" : "highlighted"})`;
+    $("#fCount").textContent = ` · ${nRules} rule${nRules === 1 ? "" : "s"}, ${nm} match${nm === 1 ? "" : "es"}`;
+  } else { sm.style.display = "none"; $("#fCount").textContent = ""; }
   const warns = [];
   const nChanged = cards.filter(isChanged).length, nNew = cards.filter(c=>c.isNew).length;
   updateStats(nChanged, nNew, offBuckets, warns);
@@ -791,7 +911,7 @@ board.addEventListener("mousemove", e => {
     const i = c.info || {};
     const meta = [c.type, i.cost !== undefined && i.cost !== "" ? "Cost " + i.cost : "", i.traits, c.locked ? "🔒 Locked (" + c.setLabel + ")" : c.setLabel].filter(Boolean).join(" · ");
     tip.innerHTML = `<div class="tn">${esc(c.name)}${i.subtitle && i.subtitle !== "-" ? ` <span class="tm">${esc(i.subtitle)}</span>` : ""}</div>
-      <div class="tm">${esc(meta)}</div>
+      <div class="tm">${esc(meta)}</div>${fieldVal(c, "line-artist") ? `<div class="tm">Line artist: ${esc(fieldVal(c, "line-artist"))}</div>` : ""}
       ${forgeUrl(c) ? `<div class="tm">Click to open in Forge Fire</div>` : ""}${iconTotal(c.icons) ? `<div class="tm">Bonus icons: ${esc(iconEmojiStr(c.icons))}</div>` : ""}${i.ability ? `<div class="ta">${esc(i.ability)}</div>` : `<div class="tz">${c.isNew ? "New card: no ability text." : "No ability text."}</div>`}`;
   }
   tip.style.display = "block"; placeTip(e);
@@ -862,7 +982,54 @@ $("#dlBlk").onclick = () => {
   a.download = "echo-of-omens-rarity-blockly.json"; a.click(); URL.revokeObjectURL(a.href);
 };
 
+/* field filter panel */
+const PRESETS = {
+  comm:   [{field:"line-artist", op:"contains", value:"commissioned"}],
+  noart:  [{field:"line-artist", op:"empty", value:""}],
+  nocomm: [{field:"line-artist", op:"nempty", value:""}, {field:"line-artist", op:"ncontains", value:"commissioned"}],
+  noicons:[{field:"bonus-icons-scripted", op:"empty", value:""}],
+  norar:  [{field:"rarity", op:"empty", value:""}]
+};
+const fbox = $("#filterBox");
+fbox.addEventListener("click", e => {
+  const b = e.target.closest("[data-fact]"); if (!b) return;
+  e.preventDefault();
+  const a = b.dataset.fact;
+  if (a === "add") filt.rules.push({field:filterFields().includes("line-artist") ? "line-artist" : "name", op:"contains", value:""});
+  if (a === "rm") filt.rules.splice(+b.dataset.i, 1);
+  if (a === "clear") filt.rules = [];
+  if (a === "preset"){ filt.rules = PRESETS[b.dataset.p].map(r => ({...r})); filt.logic = "all"; }
+  if (a === "pick"){
+    const v = b.dataset.v, list = b.dataset.list === "1";
+    const r = v === "" ? {field:filt.bd, op:"empty", value:""} : {field:filt.bd, op:list ? "contains" : "eq", value:v};
+    filt.rules = filt.rules.filter(x => x.field !== filt.bd).concat(r);
+  }
+  filtChanged(true);
+});
+fbox.addEventListener("input", e => {
+  const i = e.target.dataset.i, k = e.target.dataset.k;
+  if (i === undefined || k !== "value") return;
+  filt.rules[+i].value = e.target.value; filtChanged(false);
+});
+fbox.addEventListener("change", e => {
+  const t = e.target, i = t.dataset.i, k = t.dataset.k;
+  if (i !== undefined && (k === "field" || k === "op")){
+    const r = filt.rules[+i]; r[k] = t.value;
+    if (k === "field" && NUM_OPS.includes(r.op) && !isNumField(r.field)) r.op = "contains";
+    filtChanged(true); return;
+  }
+  if (t.id === "fMode") filt.mode = t.value;
+  else if (t.id === "fLogic") filt.logic = t.value;
+  else if (t.id === "fShow") filt.show = t.value;
+  else if (t.id === "fBd"){ filt.bd = t.value; saveFilt(); renderBreakdown(); return; }
+  else return;
+  filtChanged(false);
+});
+$("#stMatch").onclick = () => { fbox.open = true; fbox.scrollIntoView({behavior:"smooth", block:"nearest"}); };
+if (filt.rules.length) fbox.open = true;
+
 restore();
+renderFilterUI();
 </script>
 </body>
 </html>
