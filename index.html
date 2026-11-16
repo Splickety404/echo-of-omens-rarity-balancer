@@ -20,6 +20,15 @@
     --common:#9aa3b8; --uncommon:#52d189; --rare:#6ea2ff; --legendary:#ffb15c;
   }
 }
+:root[data-theme="dark"]{
+  --bg:#13151b; --panel:#1b1e27; --panel2:#232733; --line:#343a4a; --text:#e6e9f2; --muted:#98a1b8;
+  --ok:#52d189; --okbg:#173a28; --over:#ff7b7b; --overbg:#451d1f; --under:#ffc062; --underbg:#43331a;
+  --accent:#7d96ff; --new:#b794ff; --chip:#262b39; --shadow:none;
+  --common:#9aa3b8; --uncommon:#52d189; --rare:#6ea2ff; --legendary:#ffb15c;
+}
+:root{color-scheme:light}
+:root[data-theme="dark"]{color-scheme:dark}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){color-scheme:dark} }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif}
 header.top{padding:14px 20px 4px}
@@ -184,6 +193,7 @@ table.rgtab td{white-space:nowrap}
     <button id="loadFile" title="Load a progress file">Load progress ⬆</button><input type="file" id="loadInput" accept=".json,application/json" style="display:none">
     <button id="resetAll">Reset all changes</button>
     <button id="toExport">Jump to export ↓</button>
+    <button id="themeBtn" title="Switch between following your system, light, and dark"></button>
     <span class="grow"></span>
     <span class="stat" id="stChanged">0 changed</span>
     <span class="stat" id="stNew">0 new</span>
@@ -889,6 +899,20 @@ try { $("#pairMode").checked = localStorage.getItem(STORE + "-pair") === "1"; } 
 $("#pairMode").onchange = () => { try { localStorage.setItem(STORE + "-pair", $("#pairMode").checked ? "1" : "0"); } catch(e){} render(); };
 $("#pairCopies").onchange = render;
 $("#typeHi").onchange = render;
+const THEMES = ["auto","light","dark"], THEME_LABEL = {auto:"🖥 Theme: system", light:"☀️ Theme: light", dark:"🌙 Theme: dark"};
+function applyTheme(t){
+  if (t === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.dataset.theme = t;
+  $("#themeBtn").textContent = THEME_LABEL[t];
+}
+let theme = "auto";
+try { theme = localStorage.getItem(STORE + "-theme") || "auto"; } catch(e){}
+if (!THEMES.includes(theme)) theme = "auto";
+applyTheme(theme);
+$("#themeBtn").onclick = () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  try { localStorage.setItem(STORE + "-theme", theme); } catch(e){}
+  applyTheme(theme);
+};
 try { $("#rangeView").value = localStorage.getItem(STORE + "-ranges") || "off"; } catch(e){}
 $("#rangeView").onchange = () => { try { localStorage.setItem(STORE + "-ranges", $("#rangeView").value); } catch(e){} render(); };
 $("#saveFile").onclick = () => {
