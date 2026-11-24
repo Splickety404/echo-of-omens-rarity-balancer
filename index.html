@@ -99,6 +99,7 @@ table.tg input{width:46px;text-align:center;padding:3px}
 .ib b{margin-left:2px;min-width:8px;display:inline-block;text-align:center}
 .ib button{padding:0;width:16px;height:16px;line-height:13px;border-radius:50%;font-size:12px;font-weight:700}
 .ib button:disabled{opacity:.3;cursor:not-allowed}
+.ib.costed{border-color:var(--accent)}
 .isum{font-size:11px;margin:0 0 4px;color:var(--muted)}
 details.iconsum{margin:6px 0 12px;font-size:12.5px}
 details.iconsum summary{cursor:pointer;color:var(--accent)}
@@ -195,6 +196,7 @@ table.rgtab td{white-space:nowrap}
     </select>
     <input type="search" id="search" placeholder="Find card by name…" size="22">
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="showCost"> Show card costs</label>
+    <label class="stat" style="cursor:pointer"><input type="checkbox" id="editCosts"> Edit costs</label>
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="editIcons"> Edit bonus icons</label>
     <label class="stat" style="cursor:pointer" title="Highlights allies and lieutenants (others are dimmed) and shows 10-cost pair counts"><input type="checkbox" id="pairMode"> Pair mode (allies &amp; lieutenants)</label>
     <span id="copiesWrap" class="stat" style="display:none">copies per card <input type="number" id="pairCopies" value="1" min="1" style="width:46px"></span>
@@ -257,7 +259,7 @@ table.rgtab td{white-space:nowrap}
 
   <div class="exp" id="blocklySec">
     <h2>3. Blockly script (JSON)</h2>
-    <div class="sub" style="margin-bottom:8px">Loops over all cards and applies the rarity / loyalty / aspect changes by card name. New cards are not included (no block for creating cards), so add those by hand from the instructions above.</div>
+    <div class="sub" style="margin-bottom:8px">Loops over all cards and applies the rarity / loyalty / aspect / cost / bonus icon changes by card name. New cards are not included (no block for creating cards), so add those by hand from the instructions above.</div>
     <div id="blocklyWarn" class="warnbox" style="display:none;margin-bottom:8px"></div>
     <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="primary" id="copyBlk">Copy JSON</button>
@@ -432,7 +434,7 @@ function parseExport(text){
       icons[n] = (icons[n]||0) + 1;
     });
     const fields = {}; Object.keys(map).forEach(k => { fields[k] = g(k).replace(/\\n/g, "\n"); });
-    out.push({uid:++uidCounter, fields, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o, loyalty}, isNew:false, icons, origIcons:{...icons}, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:(g("ability") || g("ability-overlord")).replace(/\\n/g,"\n").trim()}});
+    out.push({uid:++uidCounter, fields, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o, loyalty}, isNew:false, icons, origIcons:{...icons}, origCost:g("card-cost"), setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:(g("ability") || g("ability-overlord")).replace(/\\n/g,"\n").trim()}});
   }
   applyLocks(out);
   fieldNames = Object.keys(map).map(k => k.trim()).filter(k => k && k !== "id");
@@ -459,14 +461,17 @@ const changedAttrs = c => {
   if (c.isNew || c.deleted) return [];
   const a = ["aspect","loyalty","rarity"].filter(k => c.orig[k] !== c.cur[k]);
   if (!iconsEqual(c.icons, c.origIcons)) a.push("icons");
+  if (costChanged(c)) a.push("cost");
   return a;
 };
-const resetCard = c => { c.deleted = false; c.cur = {...c.orig, loyalty:c.orig.loyalty || "Standard"}; c.icons = {...c.origIcons}; };
+const curCost = c => (c.info && c.info.cost !== undefined) ? String(c.info.cost) : "";
+const costChanged = c => !c.isNew && c.origCost !== undefined && curCost(c) !== c.origCost;
+const resetCard = c => { c.deleted = false; c.cur = {...c.orig, loyalty:c.orig.loyalty || "Standard"}; c.icons = {...c.origIcons}; if (c.origCost !== undefined) c.info.cost = c.origCost; };
 const isChanged = c => !!c.deleted || changedAttrs(c).length > 0;
 
 function getState(){
   const edits = {};
-  cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = {...c.cur, icons:c.icons, deleted:!!c.deleted}; });
+  cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = {...c.cur, icons:c.icons, cost:curCost(c), deleted:!!c.deleted}; });
   const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur,icons:c.icons,cost:(c.info && c.info.cost) || ""}));
   return {app:"eoo-rarity-balancer", version:2, savedAt:new Date().toISOString(), raw:rawText, edits, news, targets:DECKS.map(d => d.targets), ranges:typeRanges, rangesVersion:RANGES_VERSION, lockSet};
 }
@@ -481,7 +486,7 @@ function applyState(s){
     const e = s.edits && s.edits[c.id || ("u"+c.uid)];
     if (!e) return;
     if (e.deleted && !c.locked) c.deleted = true;
-    if (!c.locked){ c.cur = {aspect:e.aspect,loyalty:e.loyalty,rarity:e.rarity}; if (e.icons) c.icons = {...e.icons}; }
+    if (!c.locked){ c.cur = {aspect:e.aspect,loyalty:e.loyalty,rarity:e.rarity}; if (e.icons) c.icons = {...e.icons}; if (typeof e.cost === "string") c.info.cost = e.cost; }
   });
   (s.news||[]).forEach(n => cards.push({uid:++uidCounter,id:"",type:n.type,name:n.name,deck:n.deck,orig:null,cur:{...n.cur},isNew:true,icons:{...(n.icons||{})},origIcons:null,info:{subtitle:"",cost:n.cost||"",traits:"",ability:""}}));
   render();
@@ -631,6 +636,11 @@ function cntBadge(n, t){
 
 /* ---------- render ---------- */
 const editIcons = () => $("#editIcons").checked;
+const editCosts = () => $("#editCosts").checked;
+function costRow(c){
+  const v = curCost(c), dis = isLocked(c) ? " disabled" : "";
+  return `<div class="ibrow"><span class="ib${costChanged(c) ? " costed" : ""}" title="Card cost"><button data-act="co-"${dis || (v === "" || +v <= 0 ? " disabled" : "")}>−</button><span>Cost<b>${v === "" ? "–" : esc(v)}</b></span><button data-act="co+"${dis}>+</button></span></div>`;
+}
 function iconRow(c){
   return `<div class="ibrow">${ICONS.map(n => {
     const v = c.icons[n] || 0, dis = isLocked(c) ? " disabled" : "";
@@ -667,6 +677,7 @@ function chipHTML(c, q){
   if (c.isNew) parts.push("NEW CARD");
   else changedAttrs(c).forEach(k => parts.push(k === "icons"
     ? `Icons: ${iconEmojiStr(c.origIcons) || "none"} → ${iconEmojiStr(c.icons) || "none"}`
+    : k === "cost" ? `Cost: ${c.origCost || "(blank)"} → ${curCost(c) || "(blank)"}`
     : `${k[0].toUpperCase()+k.slice(1)}: ${aspLabel(c.orig[k])} → ${aspLabel(c.cur[k])}`));
   const cls = ["card"];
   if (isLocked(c)) cls.push("locked");
@@ -684,8 +695,8 @@ function chipHTML(c, q){
             : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "")
     + (!c.isNew && !isLocked(c) ? `<button class="btn btn2" data-act="cut" title="Delete card (rarity becomes Blank)">🗑</button>` : "");
   return `<div class="${cls.join(" ")}" draggable="${isLocked(c) ? "false" : "true"}" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
-    ${showCost() && c.info && c.info.cost !== "" ? `<span class="cost" title="Card cost">${esc(c.info.cost)}</span>` : ""}<span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the working set">🔒 ${esc(c.setLabel)}</span>` : ""}
-    ${filt.show ? `<span class="fv">${esc(filt.show)}: ${fv ? esc(fv.length > 60 ? fv.slice(0, 60) + "…" : fv) : "<i>blank</i>"}</span>` : ""}${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${wk ? `<span class="wk wk-${wk}">⚠ ${wk === "none" ? "no bonus icons" : "only 1 icon"}</span>` : ""}${editIcons() ? iconRow(c) : ""}${btn}</div>`;
+    ${showCost() && !editCosts() && c.info && c.info.cost !== "" ? `<span class="cost" title="Card cost">${esc(c.info.cost)}</span>` : ""}<span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the working set">🔒 ${esc(c.setLabel)}</span>` : ""}
+    ${filt.show ? `<span class="fv">${esc(filt.show)}: ${fv ? esc(fv.length > 60 ? fv.slice(0, 60) + "…" : fv) : "<i>blank</i>"}</span>` : ""}${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${wk ? `<span class="wk wk-${wk}">⚠ ${wk === "none" ? "no bonus icons" : "only 1 icon"}</span>` : ""}${editCosts() ? costRow(c) : ""}${editIcons() ? iconRow(c) : ""}${btn}</div>`;
 }
 
 function render(){
@@ -876,6 +887,7 @@ function buildExport(warns){
         if (c.orig.rarity !== c.cur.rarity) L.push(`    Rarity:  ${rarLabel(c.orig.rarity)} -> ${rarLabel(c.cur.rarity)}`);
         if (c.orig.loyalty !== c.cur.loyalty) L.push(`    Loyalty: ${c.orig.loyalty || "(blank)"} -> ${c.cur.loyalty}`);
         if (c.orig.aspect !== c.cur.aspect) L.push(`    Aspect:  ${aspLabel(c.orig.aspect)} -> ${aspLabel(c.cur.aspect)}`);
+        if (costChanged(c)) L.push(`    Cost:    ${c.origCost || "(blank)"} -> ${curCost(c) || "(blank)"}`);
         if (!iconsEqual(c.icons, c.origIcons)) L.push(`    Bonus icons: ${iconList(c.origIcons).join(", ") || "(none)"} -> ${iconList(c.icons).join(", ") || "(none)"}`);
       }
       L.push("");
@@ -889,7 +901,7 @@ function buildExport(warns){
       L.push(`NEW CARDS TO CREATE (${nw.length}):`);
       for (const c of nw){
         L.push(`* ${c.name}  [${c.type}]`);
-        L.push(`    Aspect: ${aspLabel(c.cur.aspect)}   Loyalty: ${c.cur.loyalty}   Rarity: ${rarLabel(c.cur.rarity)}`);
+        L.push(`    Aspect: ${aspLabel(c.cur.aspect)}   Loyalty: ${c.cur.loyalty}   Rarity: ${rarLabel(c.cur.rarity)}${curCost(c) !== "" ? "   Cost: " + curCost(c) : ""}`);
         if (iconTotal(c.icons)) L.push(`    Bonus icons: ${iconList(c.icons).join(", ")}`);
       }
       L.push("");
@@ -925,6 +937,9 @@ function bModify(field, kind, value){
     ELEMENT:bCard(), FIELD:bShadow(field),
     VALUE:{block:{type:"get_element_by_name",id:bid(),inputs:{TYPE:bShadow(kind),NAME:bShadow(value)}}}}};
 }
+function bCost(v){
+  return {type:"elements_modify_custom_field",id:bid(),inputs:{ELEMENT:bCard(),FIELD:bShadow("cost"),VALUE:bText(v)}};
+}
 function bIcons(ic){
   const list = iconList(ic), items = {};
   list.forEach((n, i) => { items["ADD" + i] = {block:{type:"get_element_by_name",id:bid(),inputs:{TYPE:bShadow("Bonus Icon Fragments"),NAME:bShadow(n)}}}; });
@@ -937,6 +952,7 @@ function bIf(c){
   if (c.orig.rarity !== c.cur.rarity) mods.push(bModify("rarity","Rarities",c.cur.rarity));
   if (c.orig.loyalty !== c.cur.loyalty) mods.push(bModify("loyalty","Loyalties",c.cur.loyalty));
   if (c.orig.aspect !== c.cur.aspect) mods.push(bModify("aspect","Aspects",c.cur.aspect));
+  if (costChanged(c)) mods.push(bCost(curCost(c)));
   if (!iconsEqual(c.icons, c.origIcons)) mods.push(bIcons(c.icons));
   }
   for (let i = mods.length - 2; i >= 0; i--) mods[i].next = {block:mods[i+1]};
@@ -1004,6 +1020,8 @@ $("#loadInput").onchange = e => {
 };
 try { $("#showCost").checked = localStorage.getItem(STORE + "-cost") === "1"; } catch(e){}
 try { $("#editIcons").checked = localStorage.getItem(STORE + "-icons") === "1"; } catch(e){}
+try { $("#editCosts").checked = localStorage.getItem(STORE + "-editcost") === "1"; } catch(e){}
+$("#editCosts").onchange = () => { try { localStorage.setItem(STORE + "-editcost", $("#editCosts").checked ? "1" : "0"); } catch(e){} render(); };
 $("#editIcons").onchange = () => { try { localStorage.setItem(STORE + "-icons", $("#editIcons").checked ? "1" : "0"); } catch(e){} render(); };
 $("#showCost").onchange = () => { try { localStorage.setItem(STORE + "-cost", $("#showCost").checked ? "1" : "0"); } catch(e){} render(); };
 $("#toExport").onclick = () => $("#exportSec").scrollIntoView({behavior:"smooth"});
@@ -1057,6 +1075,15 @@ board.addEventListener("click", e => {
     const n = b.dataset.icon, v = (c.icons[n] || 0) + (act === "ic+" ? 1 : -1);
     if (v < 0) return;
     if (v === 0) delete c.icons[n]; else c.icons[n] = v;
+    save(); render(); return;
+  }
+  if (act === "co+" || act === "co-"){
+    const c = cards.find(x => x.uid === +b.closest(".card").dataset.uid);
+    if (!c || isLocked(c)) return;
+    const cur = curCost(c), base = cur === "" || isNaN(parseInt(cur, 10)) ? 0 : parseInt(cur, 10);
+    const v = cur === "" && act === "co+" ? 0 : base + (act === "co+" ? 1 : -1);
+    if (v < 0) return;
+    c.info.cost = String(v);
     save(); render(); return;
   }
   if (act === "rgreset"){
