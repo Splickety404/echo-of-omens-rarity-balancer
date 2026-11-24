@@ -177,7 +177,8 @@ table.rgtab td{white-space:nowrap}
   <details class="paste" id="pasteBox" open>
     <summary>1. Paste export string</summary>
     <textarea id="raw" spellcheck="false" placeholder='Paste the whole export here (header line + one "field|field|...", line per card)'></textarea>
-    <div style="margin-top:8px"><button class="primary" id="parseBtn">Parse cards</button><span class="status" id="parseStatus"></span></div>
+    <div style="margin-top:8px"><button class="primary" id="parseBtn">Parse cards</button>
+      <select id="lockSel" title="Cards that first appeared before this set are locked" style="display:none;margin-left:8px"></select><span class="status" id="parseStatus"></span></div>
   </details>
 
   <div class="toolbar">
@@ -318,7 +319,7 @@ const DEFAULT_TARGETS = JSON.parse(JSON.stringify(DECKS.map(d=>d.targets)));
 const STORE = "eoo-rarity-balancer-v1";
 
 let typeRanges = null;  // filled from SET1_RANGES (or a saved copy) on parse
-let cards = [], maxSet = null, noLoyaltyIgnored = 0, uidCounter = 0, rawText = "", dragCard = null, skipped = 0;
+let cards = [], maxSet = null, lockSet = null, setCounts = {}, noLoyaltyIgnored = 0, uidCounter = 0, rawText = "", dragCard = null, skipped = 0;
 const openTargets = new Set();
 
 const $ = s => document.querySelector(s);
@@ -404,7 +405,7 @@ function filtChanged(rebuild){ saveFilt(); if (rebuild) renderFilterUI(); render
 
 /* ---------- parsing ---------- */
 function parseExport(text){
-  const out = []; let map = {}; COLS.forEach((c,i)=>map[c]=i); skipped = 0; maxSet = null; noLoyaltyIgnored = 0;
+  const out = []; let map = {}; COLS.forEach((c,i)=>map[c]=i); skipped = 0; maxSet = null; setCounts = {}; noLoyaltyIgnored = 0;
   for (const rawLine of text.split(/\r?\n/)){
     let l = rawLine.trim();
     if (!l) continue;
@@ -423,6 +424,7 @@ function parseExport(text){
     if (!deck || (loyalty !== "Standard" && loyalty !== "Loyal")){
       skipped++; continue;
     }
+    if (setNum !== null) setCounts[setNum] = (setCounts[setNum] || 0) + 1;
     const o = {aspect:g("aspect"), loyalty:origLoyalty, rarity:g("rarity")};
     const icons = {};
     g("bonus-icons-scripted").split("/").map(x => x.trim()).filter(Boolean).forEach(n => {
@@ -432,9 +434,24 @@ function parseExport(text){
     const fields = {}; Object.keys(map).forEach(k => { fields[k] = g(k).replace(/\\n/g, "\n"); });
     out.push({uid:++uidCounter, fields, id:g("id"), type, name:g("name").replace(/\\"/g,'"'), deck:deck.id, orig:o, cur:{...o, loyalty}, isNew:false, icons, origIcons:{...icons}, setNum, setLabel:g("first-set-appearance"), locked:false, info:{subtitle:g("subtitle"), cost:g("card-cost"), traits:g("traits"), ability:(g("ability") || g("ability-overlord")).replace(/\\n/g,"\n").trim()}});
   }
-  out.forEach(c => { c.locked = c.setNum !== null && maxSet !== null && c.setNum < maxSet; });
+  applyLocks(out);
   fieldNames = Object.keys(map).map(k => k.trim()).filter(k => k && k !== "id");
   return out;
+}
+
+/* ---------- set locking ---------- */
+// lockSet: null = use the newest set in the export, 0 = lock nothing, N = cards from sets before N are locked.
+const workingSet = () => lockSet === null ? maxSet : (lockSet || null);
+function applyLocks(list){ const ws = workingSet(); (list || cards).forEach(c => { if (!c.isNew) c.locked = c.setNum !== null && ws !== null && c.setNum < ws; }); }
+function renderLockSel(){
+  const sel = $("#lockSel"), sets = Object.keys(setCounts).map(Number).sort((a,b) => b - a);
+  sel.style.display = sets.length ? "" : "none";
+  const cnt = n => `${setCounts[n]} card${setCounts[n] === 1 ? "" : "s"}`;
+  sel.innerHTML = `<option value="auto">Working set: newest (Set ${maxSet})</option>`
+    + sets.map(n => `<option value="${n}">Working set: Set ${n} (${cnt(n)})</option>`).join("")
+    + `<option value="0">Lock nothing</option>`;
+  sel.value = lockSet === null ? "auto" : String(lockSet);
+  if (sel.selectedIndex < 0) sel.value = "auto";
 }
 
 /* ---------- state helpers ---------- */
@@ -451,13 +468,14 @@ function getState(){
   const edits = {};
   cards.forEach(c => { if (!c.isNew && isChanged(c)) edits[c.id || ("u"+c.uid)] = {...c.cur, icons:c.icons, deleted:!!c.deleted}; });
   const news = cards.filter(c => c.isNew).map(c => ({name:c.name,deck:c.deck,type:c.type,cur:c.cur,icons:c.icons,cost:(c.info && c.info.cost) || ""}));
-  return {app:"eoo-rarity-balancer", version:2, savedAt:new Date().toISOString(), raw:rawText, edits, news, targets:DECKS.map(d => d.targets), ranges:typeRanges, rangesVersion:RANGES_VERSION};
+  return {app:"eoo-rarity-balancer", version:2, savedAt:new Date().toISOString(), raw:rawText, edits, news, targets:DECKS.map(d => d.targets), ranges:typeRanges, rangesVersion:RANGES_VERSION, lockSet};
 }
 function applyState(s){
   if (!s || !s.raw) throw new Error("not a progress file");
   $("#raw").value = s.raw;
   DECKS.forEach((d,i) => { d.targets = clone((s.targets && s.targets[i]) || DEFAULT_TARGETS[i]); });
   typeRanges = (s.ranges && s.rangesVersion === RANGES_VERSION) ? s.ranges : null;  // older saves held export-derived ranges: use Set 1
+  lockSet = typeof s.lockSet === "number" ? s.lockSet : null;
   doParse(true);
   cards.forEach(c => {
     const e = s.edits && s.edits[c.id || ("u"+c.uid)];
@@ -478,11 +496,11 @@ function save(){
   if (!tabs.length){ tabs = [{id:newTabId(), name:"Cardpool 1", auto:true, state:null}]; activeTab = 0; }
   const t = tabs[activeTab];
   t.state = clone(getState());
-  if (t.auto && cards.length && maxSet !== null) t.name = `Set ${maxSet}`;  // unnamed tabs take the newest set's name
+  if (t.auto && cards.length && workingSet() !== null) t.name = `Set ${workingSet()}`;  // unnamed tabs take the working set's name
   persistTabs(); renderTabs();
 }
 function loadEmpty(){
-  $("#raw").value = ""; rawText = ""; cards = []; typeRanges = null; maxSet = null;
+  $("#raw").value = ""; rawText = ""; cards = []; typeRanges = null; maxSet = null; lockSet = null; setCounts = {};
   DECKS.forEach((d,i) => { d.targets = clone(DEFAULT_TARGETS[i]); });
   $("#parseStatus").textContent = ""; $("#pasteBox").open = true;
   render();
@@ -523,16 +541,24 @@ function restore(){
 function doParse(silent){
   rawText = $("#raw").value;
   cards = parseExport(rawText);
+  renderLockSel();
   const st = $("#parseStatus");
   if (!cards.length){ st.textContent = "No balanced cards found. Check the pasted text."; render(); return; }
   if (!typeRanges) typeRanges = baseRanges();  // tuned ranges survive new exports
   const per = DECKS.map(d => `${d.title}: ${cards.filter(c=>c.deck===d.id).length}`).join(" · ");
   st.textContent = `Parsed ${cards.length} balanced cards (${per}); ${skipped} other cards ignored`
     + (noLoyaltyIgnored ? ` (${noLoyaltyIgnored} included cards had no loyalty and are set to Standard in the export)` : "")
-    + (maxSet !== null ? `. Newest set found: Set ${maxSet}; ${cards.filter(c=>c.locked).length} older-set cards are locked.` : ". No set data found, nothing locked.");
+    + lockStatus();
   if (!silent){ $("#pasteBox").open = false; save(); }
   renderFilterUI();
   render();
+}
+
+function lockStatus(){
+  if (maxSet === null) return ". No set data found, nothing locked.";
+  const ws = workingSet(), n = cards.filter(c => c.locked).length;
+  if (ws === null) return `. Newest set found: Set ${maxSet}; locking is off.`;
+  return `. Working set: Set ${ws}${lockSet === null ? " (newest found)" : ""}; ${n} older-set card${n === 1 ? " is" : "s are"} locked.`;
 }
 
 /* ---------- bucket math ---------- */
@@ -658,7 +684,7 @@ function chipHTML(c, q){
             : isChanged(c) ? `<button class="btn" data-act="reset" title="Undo changes">↺</button>` : "")
     + (!c.isNew && !isLocked(c) ? `<button class="btn btn2" data-act="cut" title="Delete card (rarity becomes Blank)">🗑</button>` : "");
   return `<div class="${cls.join(" ")}" draggable="${isLocked(c) ? "false" : "true"}" data-uid="${c.uid}" style="--c:${RCOLOR[c.cur.rarity]||"var(--muted)"}" >
-    ${showCost() && c.info && c.info.cost !== "" ? `<span class="cost" title="Card cost">${esc(c.info.cost)}</span>` : ""}<span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the newest set">🔒 ${esc(c.setLabel)}</span>` : ""}
+    ${showCost() && c.info && c.info.cost !== "" ? `<span class="cost" title="Card cost">${esc(c.info.cost)}</span>` : ""}<span class="nm">${esc(c.name)}</span><span class="ty">${esc(shortType(c.type))}</span>${c.locked ? `<span class="lk" title="Locked: first appeared in ${esc(c.setLabel)}, older than the working set">🔒 ${esc(c.setLabel)}</span>` : ""}
     ${filt.show ? `<span class="fv">${esc(filt.show)}: ${fv ? esc(fv.length > 60 ? fv.slice(0, 60) + "…" : fv) : "<i>blank</i>"}</span>` : ""}${parts.length ? `<span class="chg">${esc(parts.join(" · "))}</span>` : ""}${wk ? `<span class="wk wk-${wk}">⚠ ${wk === "none" ? "no bonus icons" : "only 1 icon"}</span>` : ""}${editIcons() ? iconRow(c) : ""}${btn}</div>`;
 }
 
@@ -936,6 +962,11 @@ function blocklyDupes(){
 
 /* ---------- events ---------- */
 $("#parseBtn").onclick = () => doParse(false);
+$("#lockSel").onchange = e => {
+  const v = e.target.value; lockSet = v === "auto" ? null : parseInt(v, 10);
+  applyLocks(); $("#parseStatus").textContent = $("#parseStatus").textContent.replace(/\. (Working set|Newest set found|No set data).*$/, "") + lockStatus();
+  save(); render();
+};
 $("#search").oninput = render;
 try { $("#pairMode").checked = localStorage.getItem(STORE + "-pair") === "1"; } catch(e){}
 $("#pairMode").onchange = () => { try { localStorage.setItem(STORE + "-pair", $("#pairMode").checked ? "1" : "0"); } catch(e){} render(); };
