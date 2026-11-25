@@ -199,7 +199,12 @@ table.rgtab td{white-space:nowrap}
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="editCosts"> Edit costs</label>
     <label class="stat" style="cursor:pointer"><input type="checkbox" id="editIcons"> Edit bonus icons</label>
     <label class="stat" style="cursor:pointer" title="Highlights allies and lieutenants (others are dimmed) and shows 10-cost pair counts"><input type="checkbox" id="pairMode"> Pair mode (allies &amp; lieutenants)</label>
+    <select id="pairView" style="display:none" title="How to count pairs">
+      <option value="deck">Pairs: by deck type</option>
+      <option value="rarity">Pairs: by rarity (random packs)</option>
+    </select>
     <span id="copiesWrap" class="stat" style="display:none">copies per card <input type="number" id="pairCopies" value="1" min="1" style="width:46px"></span>
+    <span id="acqWrap" class="stat" style="display:none" title="Cards acquired from one side, opened as packs of 6 commons, 3 uncommons and 1 rare (1 in 6 rares is a legendary)">cards acquired <input type="number" id="pairAcq" value="30" min="1" max="300" style="width:52px"></span>
     <button id="saveFile" title="Download your progress as a file">Save progress ⬇</button>
     <button id="loadFile" title="Load a progress file">Load progress ⬆</button><input type="file" id="loadInput" accept=".json,application/json" style="display:none">
     <button id="resetAll">Reset all changes</button>
@@ -840,10 +845,80 @@ function renderIconTotals(){
     <div class="sub">Counts every loaded card in the Champion, Overlord main and scheme decks (neutral included, deleted cards excluded). Green/red numbers show the change from your original export.</div>
     <table class="ptab" style="margin-top:6px"><tr><th>Side</th><th>Cards</th>${ICONS.map(n => `<th title="${n}">${emo(n)} ${n}</th>`).join("")}<th>Total</th><th>Per card</th></tr>${rows}</table></div>`;
 }
+/* Rarity view: draw N cards from one side as packs (6 C, 3 U, 1 R; a rare slot is legendary 1 time in 6),
+   each slot an independent uniform pick from that rarity, and count 10-radiance pairs among the allies/lieutenants drawn. */
+const PACK_SLOTS = ["Common","Common","Common","Common","Common","Common","Uncommon","Uncommon","Uncommon","Rare"];
+const LEGEND_CHANCE = 1/6, PAIR_TRIALS = 20000;
+function rng(seed){ return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function sidePool(deckId, useOrig){
+  const by = {}; RARITIES.forEach(r => by[r] = []);
+  cards.forEach(c => {
+    if (c.deck !== deckId) return;
+    if (useOrig ? c.isNew : c.deleted) return;
+    const r = (useOrig ? c.orig : c.cur).rarity;
+    if (by[r]) by[r].push(c.type === "C - Ally" || c.type === "O - Lieutenant" ? costOf(c) : null);
+  });
+  RARITIES.forEach(r => by[r].sort((a, b) => (a ?? -1) - (b ?? -1)));  // stable order so equal pools give identical results
+  return by;  // rarity -> list of pair costs (null = not a pair card, or no cost)
+}
+const simCache = new Map();
+function simPairs(by, nCards){
+  const key = nCards + JSON.stringify(RARITIES.map(r => by[r]));
+  if (!simCache.has(key)){ if (simCache.size > 50) simCache.clear(); simCache.set(key, simPairsRun(by, nCards)); }
+  return simCache.get(key);
+}
+function simPairsRun(by, nCards){
+  const rand = rng(12345), dist = [];
+  let sum = 0, eligible = 0;
+  for (let t = 0; t < PAIR_TRIALS; t++){
+    const n = Array(11).fill(0);
+    for (let i = 0; i < nCards; i++){
+      let r = PACK_SLOTS[i % 10];
+      if (r === "Rare"){ r = rand() < LEGEND_CHANCE ? "Legendary" : "Rare"; if (!by[r].length) r = r === "Rare" ? "Legendary" : "Rare"; }
+      const list = by[r]; if (!list.length) continue;
+      const v = list[Math.floor(rand() * list.length)];
+      if (v !== null){ n[v]++; eligible++; }
+    }
+    let p = 0;
+    for (let k = 0; k < 5; k++) p += Math.min(n[k], n[10-k]);
+    p += Math.floor(n[5] / 2);
+    sum += p; dist[p] = (dist[p] || 0) + 1;
+  }
+  return {avg:sum / PAIR_TRIALS, eligible:eligible / PAIR_TRIALS, dist:Array.from(dist, x => (x || 0) / PAIR_TRIALS)};
+}
+function renderRarityPairs(el){
+  const nCards = Math.min(300, Math.max(1, parseInt($("#pairAcq").value, 10) || 30));
+  const slots = {Common:0, Uncommon:0, Rare:0};
+  for (let i = 0; i < nCards; i++) slots[PACK_SLOTS[i % 10]]++;
+  const sides = [{deck:"champ",title:"Champion",pt:"allies"},{deck:"main",title:"Overlord (no schemes)",pt:"lieutenants"}];
+  const pct = x => (x * 100).toFixed(x > 0 && x < 0.1 ? 1 : 0) + "%";
+  const tables = sides.map(side => {
+    const cur = sidePool(side.deck, false), orig = sidePool(side.deck, true);
+    const sc = simPairs(cur, nCards), so = simPairs(orig, nCards);
+    const expSlots = {Common:slots.Common, Uncommon:slots.Uncommon, Rare:slots.Rare * (1 - LEGEND_CHANCE), Legendary:slots.Rare * LEGEND_CHANCE};
+    const rows = RARITIES.map(r => {
+      const list = cur[r], np = list.filter(v => v !== null).length;
+      return `<tr><td><span style="color:${RCOLOR[r]}">●</span> ${r}</td><td>${+expSlots[r].toFixed(2)}</td><td>${list.length}</td><td>${np}</td><td>${list.length ? pct(np / list.length) : "–"}</td><td>${list.length ? (expSlots[r] * np / list.length).toFixed(2) : "–"}</td></tr>`;
+    }).join("");
+    const d = sc.avg - so.avg, dl = Math.abs(d) < 0.005 ? "" : ` <span class="${d > 0 ? "up" : "down"}">${d > 0 ? "+" : ""}${d.toFixed(2)}</span>`;
+    const dist = sc.dist.map((p, k) => p >= 0.005 ? `${k}: ${pct(p)}` : "").filter(Boolean).join(" · ");
+    return `<div><h3 style="margin:0 0 4px;font-size:14px">${side.title}</h3>
+      <div style="font-size:15px;margin:2px 0 6px">Average pairs per ${nCards} cards: <b>${sc.avg.toFixed(2)}</b>${dl} <span class="sub" style="margin:0">(was ${so.avg.toFixed(2)})</span></div>
+      <table class="ptab"><tr><th>Rarity</th><th title="Expected cards of this rarity in ${nCards} acquired">Cards drawn</th><th>In pool</th><th title="${side.pt} with a cost">Pair cards</th><th>Share</th><th title="Expected pair cards of this rarity drawn">Pair cards drawn</th></tr>${rows}
+      <tr><td><b>Total</b></td><td>${nCards}</td><td></td><td></td><td></td><td><b>${sc.eligible.toFixed(2)}</b></td></tr></table>
+      <div class="sub" style="margin-top:4px">Chance of exactly N pairs: ${dist}</div></div>`;
+  }).join("");
+  el.innerHTML = `<div class="pairs"><h2>10-radiance pairs by rarity: random ${nCards}-card acquisition</h2>
+    <div class="sub">Cards come from one side only, as packs of 6 commons, 3 uncommons and 1 rare (a rare slot is legendary 1 time in 6). Each slot is a random card of that rarity from the loaded cardpool (aspect ignored, duplicates possible, blank-rarity and deleted cards excluded). Only ${sides.map(s => s.pt).join(" / ")} with a cost can pair; each card is used in one pair. Averages come from ${PAIR_TRIALS.toLocaleString()} simulated acquisitions; "was" is your original export.</div>
+    <div class="sides">${tables}</div></div>`;
+}
 function renderPairs(){
-  const el = $("#pairs");
-  $("#copiesWrap").style.display = pairMode() ? "" : "none";
+  const el = $("#pairs"), byRar = $("#pairView").value === "rarity";
+  $("#pairView").style.display = pairMode() ? "" : "none";
+  $("#copiesWrap").style.display = pairMode() && !byRar ? "" : "none";
+  $("#acqWrap").style.display = pairMode() && byRar ? "" : "none";
   if (!pairMode() || !cards.length){ el.innerHTML = ""; return; }
+  if (byRar) return renderRarityPairs(el);
   const copies = Math.max(1, parseInt($("#pairCopies").value, 10) || 1);
   const sides = [{deck:"champ",type:"C - Ally",title:"Champion allies"},{deck:"main",type:"O - Lieutenant",title:"Overlord lieutenants"}];
   const costStr = a => a.map((v, k) => v ? `${k}\u00D7${v}` : "").filter(Boolean).join(" ") || "none";
@@ -988,6 +1063,10 @@ $("#search").oninput = render;
 try { $("#pairMode").checked = localStorage.getItem(STORE + "-pair") === "1"; } catch(e){}
 $("#pairMode").onchange = () => { try { localStorage.setItem(STORE + "-pair", $("#pairMode").checked ? "1" : "0"); } catch(e){} render(); };
 $("#pairCopies").onchange = render;
+try { const v = JSON.parse(localStorage.getItem(STORE + "-pairview") || "{}"); if (v.view) $("#pairView").value = v.view; if (v.acq) $("#pairAcq").value = v.acq; } catch(e){}
+const savePairView = () => { try { localStorage.setItem(STORE + "-pairview", JSON.stringify({view:$("#pairView").value, acq:$("#pairAcq").value})); } catch(e){} render(); };
+$("#pairView").onchange = savePairView;
+$("#pairAcq").onchange = savePairView;
 $("#typeHi").onchange = render;
 const THEMES = ["auto","light","dark"], THEME_LABEL = {auto:"🖥 Theme: system", light:"☀️ Theme: light", dark:"🌙 Theme: dark"};
 function applyTheme(t){
